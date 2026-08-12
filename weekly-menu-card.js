@@ -48,6 +48,38 @@ const DEFAUTS = {
   show_calories: true,
   show_allergens: true,
   replace_action: null,    // { service: "domaine.service", data: { … } }
+  // Boutons d'action prédéfinis (activés par défaut, configurables)
+  actions: {
+    meal_done: true,        // Marquer le repas comme fait
+    clear_meal: true,       // Effacer le repas du jour
+    refresh_shopping: false,// Régénérer la liste de courses
+  },
+};
+
+/* Définition des boutons d'action prédéfinis.
+   Chaque bouton appelle un service jow sur le jour actuellement affiché. */
+const ACTIONS_PREDEFINIES = {
+  meal_done: {
+    label: "Marquer comme fait",
+    icon: "✓",
+    service: "jow.meal_done",
+    data: { weekday: "{weekday}" },
+    confirm: "Marquer ce repas comme fait ? Ses ingrédients seront retirés de la liste de courses.",
+  },
+  clear_meal: {
+    label: "Effacer ce jour",
+    icon: "✕",
+    service: "jow.clear_meal",
+    data: { weekday: "{weekday}" },
+    confirm: "Effacer le repas de ce jour ?",
+  },
+  refresh_shopping: {
+    label: "Régénérer la liste de courses",
+    icon: "⟳",
+    service: "jow.refresh_shopping_list",
+    data: { week_offset: 0, keep_checked: true },
+    confirm: null,
+  },
 };
 
 /* États qui signifient « pas de plat », quel que soit l'intégration. */
@@ -475,6 +507,17 @@ class WeeklyMenuCard extends HTMLElement {
          </button>`
       : "";
 
+    // Boutons d'action prédéfinis (meal_done, clear_meal, refresh_shopping)
+    const actionsConfig = this._config.actions || {};
+    const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
+      .filter(([key]) => actionsConfig[key] !== false)
+      .map(([key, def]) => {
+        const confirmAttr = def.confirm ? ` data-confirm="${this._esc(def.confirm)}"` : "";
+        return `<button class="bouton action" data-action-predefinie="${key}" data-jour-action="${j.index}"${this._occupe ? " disabled" : ""}${confirmAttr}>
+          <span>${def.icon}</span> ${this._esc(def.label)}
+        </button>`;
+      }).join("");
+
     return `
       ${photo ? `<img class="photo" src="${photo}" alt="" data-photo="${j.index}">` : ""}
       <div class="detail${sansPhoto ? " sans-photo" : ""}">
@@ -485,8 +528,9 @@ class WeeklyMenuCard extends HTMLElement {
         <div class="actions">
           ${lien ? `<a class="bouton" href="${lien}" target="_blank" rel="noopener noreferrer">Voir la recette ↗</a>` : ""}
           ${boutonChanger}
-          ${this._config.show_allergens ? `<span class="allergenes mono">${this._esc(all)}</span>` : ""}
+          ${boutonsActions}
         </div>
+        ${this._config.show_allergens ? `<p class="allergenes mono" style="margin-top:12px;font-size:0.7rem;color:var(--gris)">${this._esc(all)}</p>` : ""}
       </div>`;
   }
 
@@ -571,6 +615,41 @@ class WeeklyMenuCard extends HTMLElement {
     this._signature = null;
     this._render();
     setTimeout(() => { this._signature = null; this._render(); }, 5000);
+  }
+
+  /** Appelle une action prédéfinie (meal_done, clear_meal, refresh_shopping)
+   *  sur le jour actuellement affiché. */
+  async _actionPredefinie(key, jourIndex) {
+    const def = ACTIONS_PREDEFINIES[key];
+    if (!def || this._occupe || !this._hass) return;
+
+    // Confirmation si nécessaire
+    if (def.confirm && !window.confirm(def.confirm)) return;
+
+    const [domaine, service] = def.service.split(".", 2);
+    if (!domaine || !service) return;
+
+    // Remplir les jetons {weekday}, {index}
+    const remplir = (v) => (typeof v === "string"
+      ? v.replace("{weekday}", JOURS[jourIndex]).replace("{index}", String(jourIndex))
+      : v);
+    const data = Object.fromEntries(
+      Object.entries(def.data).map(([k, v]) => [k, remplir(v)])
+    );
+
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    try {
+      await this._hass.callService(domaine, service, data);
+    } catch (err) {
+      console.error(`weekly-menu-card : échec de ${def.service}`, err);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+    }
   }
 
   _afficher(i) {
@@ -659,6 +738,12 @@ class WeeklyMenuCard extends HTMLElement {
       el.addEventListener("click", () => this._planifierSemaineSuivante());
     });
 
+    R.querySelectorAll("[data-action-predefinie]").forEach((el) => {
+      el.addEventListener("click", () => {
+        this._actionPredefinie(el.dataset.actionPredefinie, Number(el.dataset.jourAction));
+      });
+    });
+
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule
     // sur la mise en page typographique.
     const img = R.querySelector("img[data-photo]");
@@ -696,6 +781,11 @@ const LIBELLES = {
   // ---- Bouton « Planifier la semaine prochaine » ----
   plan_next_section: "Bouton « Planifier la semaine prochaine »",
   plan_next_enabled: "Activer le bouton de planification S+1",
+  // ---- Boutons d'action prédéfinis ----
+  actions_section: "Boutons d'action (sur le jour affiché)",
+  action_meal_done: "Bouton « Marquer comme fait »",
+  action_clear_meal: "Bouton « Effacer ce jour »",
+  action_refresh_shopping: "Bouton « Régénérer la liste de courses »",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   // ---- Correspondance des attributs (avancé) ----
@@ -819,6 +909,12 @@ class WeeklyMenuCardEditor extends HTMLElement {
       { type: "expandable", name: "plan_next_section", title: LIBELLES.plan_next_section, schema: [
         { name: "plan_next_enabled", selector: { boolean: {} } },
       ]},
+      // ---- Boutons d'action prédéfinis ----
+      { type: "expandable", name: "actions_section", title: LIBELLES.actions_section, schema: [
+        { name: "action_meal_done", selector: { boolean: {} } },
+        { name: "action_clear_meal", selector: { boolean: {} } },
+        { name: "action_refresh_shopping", selector: { boolean: {} } },
+      ]},
       // ---- Entités ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
         schema: JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })) },
@@ -860,6 +956,11 @@ class WeeklyMenuCardEditor extends HTMLElement {
       plan_next_section: {
         plan_next_enabled: this._config.plan_next_enabled !== false,
       },
+      actions_section: {
+        action_meal_done: (this._config.actions || {}).meal_done !== false,
+        action_clear_meal: (this._config.actions || {}).clear_meal !== false,
+        action_refresh_shopping: (this._config.actions || {}).refresh_shopping === true,
+      },
       entites: ent,
       attributes_section: {
         attr_name: attrs.name ?? CHAMPS.name ?? "",
@@ -893,13 +994,20 @@ class WeeklyMenuCardEditor extends HTMLElement {
         // Sections expandable
         const replaceData = v.replace_section || {};
         const planNextData = v.plan_next_section || {};
+        const actionsData = v.actions_section || {};
         const attrData = v.attributes_section || {};
         delete v.replace_section;
         delete v.plan_next_section;
+        delete v.actions_section;
         delete v.attributes_section;
 
         const action = this._fabriquerAction(replaceData);
         const attributes = this._fabriquerAttributes(attrData);
+        const actions = {
+          meal_done: actionsData.action_meal_done !== false,
+          clear_meal: actionsData.action_clear_meal !== false,
+          refresh_shopping: actionsData.action_refresh_shopping === true,
+        };
 
         this._emettre({
           type: this._config.type,
@@ -909,6 +1017,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(planNextData.plan_next_enabled === false ? { plan_next_enabled: false } : {}),
           ...(entities.length === 7 ? { entities } : {}),
           ...(attributes ? { attributes } : {}),
+          actions,
         });
       });
       this.shadowRoot.appendChild(this._form);

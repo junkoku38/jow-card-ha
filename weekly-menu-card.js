@@ -705,6 +705,10 @@ class WeeklyMenuCard extends HTMLElement {
     this._occupe = true;
     this._signature = null;
     this._render();
+    this._toast("Planification S+1 en cours…");
+
+    let succes = 0;
+    let echecs = 0;
 
     // Appeler le service pour chaque jour, avec week_offset=1
     for (let i = 0; i < 7; i++) {
@@ -715,10 +719,16 @@ class WeeklyMenuCard extends HTMLElement {
         Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
       );
       data.week_offset = 1;
+      // S'assurer qu'un criteria est présent (fallback si non configuré)
+      if (!data.criteria) data.criteria = "plat varié équilibré";
       try {
         await this._hass.callService(action.domaine, action.service, data);
+        succes++;
+        this._toast(`S+1 : ${succes}/7 jours planifiés`);
       } catch (err) {
+        echecs++;
         console.error(`weekly-menu-card : échec planification S+1 ${JOURS[i]}`, err);
+        this._toast(`✕ Échec ${JOURS[i]} — erreur`, true);
       }
       this._signature = null;
       this._render();
@@ -727,6 +737,11 @@ class WeeklyMenuCard extends HTMLElement {
     this._occupe = false;
     this._signature = null;
     this._render();
+    if (echecs === 0) {
+      this._toast(`✓ Semaine prochaine planifiée (${succes}/7)`);
+    } else {
+      this._toast(`S+1 : ${succes} réussis, ${echecs} échecs`, true);
+    }
     setTimeout(() => { this._signature = null; this._render(); }, 5000);
   }
 

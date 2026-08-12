@@ -678,14 +678,40 @@ class WeeklyMenuCard extends HTMLElement {
 /* ------------------------------------------------------------------ */
 
 const LIBELLES = {
+  // ---- Affichage ----
   title: "Titre (facultatif)",
-  days: "Affichage",
+  days: "Mode d'affichage",
   show_calories: "Afficher les calories",
   show_allergens: "Afficher les allergènes",
-  replace_service: "Service du bouton « Changer le plat »",
-  replace_query: "Recherche à transmettre",
-  replace_label: "Libellé du bouton",
-  entites: "Entités, jour par jour",
+  // ---- Bouton « Changer de recette » ----
+  replace_section: "Bouton « Changer de recette » (IA)",
+  replace_enabled: "Activer le bouton",
+  replace_service: "Service Home Assistant à appeler",
+  replace_criteria: "Critères / prompt pour l'IA",
+  replace_criteria_help: "Ex : « plat varié équilibré », « dîner léger et rapide », « recette de saison simple »",
+  replace_covers: "Nombre de couverts (portions)",
+  replace_weather: "Entité météo (adapte selon le temps)",
+  replace_ai: "Agent IA (génère la requête de recherche Jow)",
+  replace_limit: "Nombre de suggestions à récupérer",
+  // ---- Bouton « Planifier la semaine prochaine » ----
+  plan_next_section: "Bouton « Planifier la semaine prochaine »",
+  plan_next_enabled: "Activer le bouton de planification S+1",
+  // ---- Entités ----
+  entites: "Entités des 7 jours (lundi à dimanche)",
+  // ---- Correspondance des attributs (avancé) ----
+  attributes_section: "Correspondance des attributs (avancé)",
+  attributes_help: "À modifier uniquement si vos entités utilisent d'autres noms d'attributs que ha-jow",
+  attr_name: "Attribut du nom du plat (vide = état de l'entité)",
+  attr_planned: "Attribut « plat planifié » (booléen)",
+  attr_image: "Attribut de l'image",
+  attr_url: "Attribut du lien vers la recette",
+  attr_date: "Attribut de la date",
+  attr_calories: "Attribut des calories (par portion)",
+  attr_allergens: "Attribut des allergènes (liste)",
+  attr_covers: "Attribut du nombre de couverts",
+  attr_duration: "Attribut du temps de préparation (min)",
+  attr_cooking_time: "Attribut du temps de cuisson (min)",
+  attr_ingredients: "Attribut des ingrédients (liste)",
 };
 
 class WeeklyMenuCardEditor extends HTMLElement {
@@ -711,16 +737,39 @@ class WeeklyMenuCardEditor extends HTMLElement {
     return Object.fromEntries(JOURS.map((j, i) => [j, liste[i]]));
   }
 
-  /** Assemble replace_action à partir des champs de l'éditeur.
-   *  Préserve les données existantes du replace_action (criteria, covers,
-   *  weather_entity, ai_entity…) et ne met à jour que service et query. */
-  _fabriquerAction(service, query) {
-    if (!service || !service.includes(".")) return null;
-    const existing = this._config.replace_action?.data || {};
-    const data = { ...existing };
-    if (query) data.query = query;
-    else delete data.query;
+  /** Assemble replace_action à partir des champs de l'éditeur. */
+  _fabriquerAction(v) {
+    if (!v.replace_enabled) return null;
+    const service = v.replace_service || "jow.suggest";
+    if (!service.includes(".")) return null;
+    const data = {};
+    if (v.replace_criteria) data.criteria = v.replace_criteria;
+    data.weekday = "{weekday}";
+    if (v.replace_covers) data.covers = Number(v.replace_covers);
+    if (v.replace_weather) data.weather_entity = v.replace_weather;
+    if (v.replace_ai) data.ai_entity = v.replace_ai;
+    if (v.replace_limit) data.limit = Number(v.replace_limit);
     return { service, data };
+  }
+
+  _fabriquerAttributes(v) {
+    const attrs = {};
+    const map = [
+      ["attr_name", "name"], ["attr_planned", "planned"], ["attr_image", "image"],
+      ["attr_url", "url"], ["attr_date", "date"], ["attr_calories", "calories"],
+      ["attr_allergens", "allergens"], ["attr_covers", "covers"],
+      ["attr_duration", "duration"], ["attr_cooking_time", "cooking_time"],
+      ["attr_ingredients", "ingredients"],
+    ];
+    let hasCustom = false;
+    for (const [key, champ] of map) {
+      const val = v[key];
+      if (val !== undefined && val !== "") {
+        attrs[champ] = val === "null" ? null : val;
+        if (val !== CHAMPS[champ]) hasCustom = true;
+      }
+    }
+    return hasCustom ? attrs : undefined;
   }
 
   _emettre(config) {
@@ -748,6 +797,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
 
   _schema() {
     return [
+      // ---- Affichage ----
       { name: "title", selector: { text: {} } },
       { name: "days", selector: { select: { mode: "dropdown", options: [
         { value: "7", label: "Semaine entière — détail + index" },
@@ -755,25 +805,75 @@ class WeeklyMenuCardEditor extends HTMLElement {
       ] } } },
       { name: "show_calories", selector: { boolean: {} } },
       { name: "show_allergens", selector: { boolean: {} } },
-      { name: "replace_service", selector: { text: {} } },
-      { name: "replace_query", selector: { text: {} } },
-      { name: "replace_label", selector: { text: {} } },
+      // ---- Bouton « Changer de recette » ----
+      { type: "expandable", name: "replace_section", title: LIBELLES.replace_section, schema: [
+        { name: "replace_enabled", selector: { boolean: {} } },
+        { name: "replace_service", selector: { text: {} }, default: "jow.suggest" },
+        { name: "replace_criteria", selector: { text: { multiline: true } } },
+        { name: "replace_covers", selector: { number: { min: 1, max: 12, mode: "slider" } } },
+        { name: "replace_weather", selector: { entity: { domain: ["weather"] } } },
+        { name: "replace_ai", selector: { entity: { domain: ["ai_task"] } } },
+        { name: "replace_limit", selector: { number: { min: 1, max: 20, mode: "slider" } } },
+      ]},
+      // ---- Bouton « Planifier la semaine prochaine » ----
+      { type: "expandable", name: "plan_next_section", title: LIBELLES.plan_next_section, schema: [
+        { name: "plan_next_enabled", selector: { boolean: {} } },
+      ]},
+      // ---- Entités ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
         schema: JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })) },
+      // ---- Correspondance des attributs (avancé) ----
+      { type: "expandable", name: "attributes_section", title: LIBELLES.attributes_section, schema: [
+        { name: "attr_name", selector: { text: {} } },
+        { name: "attr_planned", selector: { text: {} } },
+        { name: "attr_image", selector: { text: {} } },
+        { name: "attr_url", selector: { text: {} } },
+        { name: "attr_date", selector: { text: {} } },
+        { name: "attr_calories", selector: { text: {} } },
+        { name: "attr_allergens", selector: { text: {} } },
+        { name: "attr_covers", selector: { text: {} } },
+        { name: "attr_duration", selector: { text: {} } },
+        { name: "attr_cooking_time", selector: { text: {} } },
+        { name: "attr_ingredients", selector: { text: {} } },
+      ]},
     ];
   }
 
   _donnees() {
     const ent = this._entitesCourantes();
+    const ra = this._config.replace_action;
+    const attrs = this._config.attributes || {};
     return {
       title: this._config.title || "",
       days: String(this._config.days ?? 7),
       show_calories: this._config.show_calories !== false,
       show_allergens: this._config.show_allergens !== false,
-      replace_service: this._config.replace_action?.service || "",
-      replace_query: this._config.replace_action?.data?.query || "",
-      replace_label: this._config.replace_label || "",
+      replace_section: {
+        replace_enabled: !!ra,
+        replace_service: ra?.service || "jow.suggest",
+        replace_criteria: ra?.data?.criteria || "",
+        replace_covers: ra?.data?.covers || 2,
+        replace_weather: ra?.data?.weather_entity || "",
+        replace_ai: ra?.data?.ai_entity || "",
+        replace_limit: ra?.data?.limit || 5,
+      },
+      plan_next_section: {
+        plan_next_enabled: this._config.plan_next_enabled !== false,
+      },
       entites: ent,
+      attributes_section: {
+        attr_name: attrs.name ?? CHAMPS.name ?? "",
+        attr_planned: attrs.planned ?? CHAMPS.planned ?? "",
+        attr_image: attrs.image ?? CHAMPS.image ?? "",
+        attr_url: attrs.url ?? CHAMPS.url ?? "",
+        attr_date: attrs.date ?? CHAMPS.date ?? "",
+        attr_calories: attrs.calories ?? CHAMPS.calories ?? "",
+        attr_allergens: attrs.allergens ?? CHAMPS.allergens ?? "",
+        attr_covers: attrs.covers ?? CHAMPS.covers ?? "",
+        attr_duration: attrs.duration ?? CHAMPS.duration ?? "",
+        attr_cooking_time: attrs.cooking_time ?? CHAMPS.cooking_time ?? "",
+        attr_ingredients: attrs.ingredients ?? CHAMPS.ingredients ?? "",
+      },
     };
   }
 
@@ -784,24 +884,31 @@ class WeeklyMenuCardEditor extends HTMLElement {
       this._form.computeLabel = (s) => LIBELLES[s.name] || s.name;
       this._form.addEventListener("value-changed", (e) => {
         const v = { ...e.detail.value };
-        // Les sélecteurs d'entités sont dans une section « expandable » :
-        // ha-form les regroupe sous v.entites au lieu de v.lundi, v.mardi…
-        // On merge avec les entités existantes pour ne pas perdre celles
-        // qui n'ont pas été modifiées.
+        // Entités : merge avec les existantes
         const entitesGroupe = v.entites || {};
         const existantes = this._entitesCourantes();
-        const entities = JOURS.map((j) => entitesGroupe[j] || v[j] || existantes[j]).filter(Boolean);
-        JOURS.forEach((j) => delete v[j]);
+        const entities = JOURS.map((j) => entitesGroupe[j] || existantes[j]).filter(Boolean);
         delete v.entites;
-        const action = this._fabriquerAction(v.replace_service, v.replace_query);
-        delete v.replace_service;
-        delete v.replace_query;
+
+        // Sections expandable
+        const replaceData = v.replace_section || {};
+        const planNextData = v.plan_next_section || {};
+        const attrData = v.attributes_section || {};
+        delete v.replace_section;
+        delete v.plan_next_section;
+        delete v.attributes_section;
+
+        const action = this._fabriquerAction(replaceData);
+        const attributes = this._fabriquerAttributes(attrData);
+
         this._emettre({
           type: this._config.type,
           ...v,
           days: Number(v.days) === 1 ? 1 : 7,
           ...(action ? { replace_action: action } : { replace_action: null }),
+          ...(planNextData.plan_next_enabled === false ? { plan_next_enabled: false } : {}),
           ...(entities.length === 7 ? { entities } : {}),
+          ...(attributes ? { attributes } : {}),
         });
       });
       this.shadowRoot.appendChild(this._form);
@@ -839,12 +946,20 @@ class WeeklyMenuCardEditor extends HTMLElement {
         <label for="jc1">${LIBELLES.show_calories}</label></div>
       <div class="case"><input type="checkbox" id="jc2" data-cle="show_allergens"${this._config.show_allergens !== false ? " checked" : ""}>
         <label for="jc2">${LIBELLES.show_allergens}</label></div>
-      <label><span class="lib">${LIBELLES.replace_service}</span>
-        <input type="text" data-cle="replace_service" placeholder="ex. jow.plan_meal — laisser vide pour masquer le bouton" value="${this._esc(this._config.replace_action?.service || "")}"></label>
-      <label><span class="lib">${LIBELLES.replace_query}</span>
-        <input type="text" data-cle="replace_query" placeholder="ex. poulet léger" value="${this._esc(this._config.replace_action?.data?.query || "")}"></label>
-      <label><span class="lib">${LIBELLES.replace_label}</span>
-        <input type="text" data-cle="replace_label" placeholder="Changer le plat" value="${this._esc(this._config.replace_label || "")}"></label>
+      <fieldset><legend>${LIBELLES.replace_section}</legend>
+        <div class="case"><input type="checkbox" id="jc3" data-cle="replace_enabled"${this._config.replace_action ? " checked" : ""}>
+          <label for="jc3">${LIBELLES.replace_enabled}</label></div>
+        <label><span class="lib">${LIBELLES.replace_service}</span>
+          <input type="text" data-cle="replace_service" placeholder="jow.suggest" value="${this._esc(this._config.replace_action?.service || "jow.suggest")}"></label>
+        <label><span class="lib">${LIBELLES.replace_criteria}</span>
+          <textarea data-cle="replace_criteria" rows="2" placeholder="${LIBELLES.replace_criteria_help}" style="width:100%;box-sizing:border-box;padding:8px 10px;font:inherit;border:1px solid rgba(128,128,128,.4);border-radius:7px;background:transparent;color:inherit;resize:vertical">${this._esc(this._config.replace_action?.data?.criteria || "")}</textarea></label>
+        <label><span class="lib">${LIBELLES.replace_covers}</span>
+          <input type="number" data-cle="replace_covers" min="1" max="12" value="${this._config.replace_action?.data?.covers || 2}"></label>
+        <label><span class="lib">${LIBELLES.replace_weather}</span>
+          <input type="text" data-cle="replace_weather" placeholder="weather.gagny" value="${this._esc(this._config.replace_action?.data?.weather_entity || "")}"></label>
+        <label><span class="lib">${LIBELLES.replace_ai}</span>
+          <input type="text" data-cle="replace_ai" placeholder="ai_task.ollama_ai_task" value="${this._esc(this._config.replace_action?.data?.ai_entity || "")}"></label>
+      </fieldset>
       <fieldset><legend>${LIBELLES.entites}</legend>
         ${JOURS.map((j) => `<label><span class="lib">${cap(j)}</span>
           <input type="text" data-entite="${j}" value="${this._esc(ent[j])}"></label>`).join("")}
@@ -865,13 +980,27 @@ class WeeklyMenuCardEditor extends HTMLElement {
     const entities = JOURS
       .map((j) => (R.querySelector(`[data-entite="${j}"]`)?.value || "").trim())
       .filter(Boolean);
+
+    const replaceEnabled = lire("replace_enabled");
+    const action = replaceEnabled ? {
+      service: lire("replace_service") || "jow.suggest",
+      data: {
+        criteria: lire("replace_criteria") || "",
+        weekday: "{weekday}",
+        covers: Number(lire("replace_covers")) || 2,
+        ...(lire("replace_weather") ? { weather_entity: lire("replace_weather") } : {}),
+        ...(lire("replace_ai") ? { ai_entity: lire("replace_ai") } : {}),
+        limit: 5,
+      },
+    } : null;
+
     this._emettre({
       type: this._config.type,
       title: lire("title"),
       days: Number(lire("days")) === 1 ? 1 : 7,
       show_calories: lire("show_calories"),
       show_allergens: lire("show_allergens"),
-
+      ...(action ? { replace_action: action } : { replace_action: null }),
       ...(entities.length === 7 ? { entities } : {}),
     });
   }

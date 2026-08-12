@@ -202,6 +202,21 @@ const STYLES = `
   .bouton:hover { border-color: var(--gris); }
   .bouton:focus-visible { outline: 2px solid var(--papier); outline-offset: 2px; }
   .bouton[disabled] { opacity: 0.5; cursor: progress; }
+  .suggest-bar { display: flex; gap: 0; margin-top: 12px; }
+  .suggest-bar input {
+    flex: 1; border: 1px solid var(--filet); border-radius: 8px 0 0 8px;
+    background: var(--encre-2); color: var(--papier);
+    font: inherit; font-size: 0.81rem; padding: 8px 12px; outline: none;
+  }
+  .suggest-bar input::placeholder { color: var(--gris); }
+  .suggest-bar input:focus { border-color: var(--gris); }
+  .suggest-bar button {
+    border: 1px solid var(--filet); border-left: none; border-radius: 0 8px 8px 0;
+    background: none; color: var(--papier); padding: 8px 14px;
+    font: inherit; font-size: 0.81rem; cursor: pointer;
+  }
+  .suggest-bar button:hover { border-color: var(--gris); }
+  .suggest-bar button:disabled { opacity: 0.5; cursor: progress; }
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--encre); color: var(--papier); padding: 10px 20px;
@@ -462,7 +477,8 @@ class WeeklyMenuCard extends HTMLElement {
         ${vedette == null ? `
           <p class="vide-total">${this._entites.some((id) => this._hass.states[id])
             ? "Aucun repas planifié cette semaine."
-            : "Aucune des entités configurées n'existe. Vérifiez la configuration de la carte."}</p>`
+            : "Aucune des entités configurées n'existe. Vérifiez la configuration de la carte."}</p>
+          ${this._action() ? this._barreSuggestVide() : ""}`
           : this._vueDetail(jours[vedette], planifies.length)}
         ${unSeulJour ? "" : this._index(jours, vedette)}
         ${unSeulJour ? "" : this._boutonSemaineSuivante()}
@@ -474,6 +490,21 @@ class WeeklyMenuCard extends HTMLElement {
       </div>`;
 
     this._brancher();
+  }
+
+  /** Barre de saisie pour la vue "aucun repas planifié" : cible le
+   *  premier jour vide de la semaine (typiquement lundi). */
+  _barreSuggestVide() {
+    const occupe = this._occupe;
+    // Trouver le premier jour non planifié
+    let premierVide = 0;
+    for (let i = 0; i < 7; i++) {
+      if (!this._jour(i).planned) { premierVide = i; break; }
+    }
+    return `<div class="suggest-bar" style="max-width:400px;margin:0 auto">
+      <input type="text" data-suggest-input="${premierVide}" placeholder="Proposer un plat pour ${JOURS[premierVide]}\u2026"${occupe ? " disabled" : ""}>
+      <button data-suggest-go="${premierVide}"${occupe ? " disabled" : ""}>${occupe ? "\u2026" : "Go"}</button>
+    </div>`;
   }
 
   _vueDetail(j, nbPlanifies) {
@@ -526,9 +557,21 @@ class WeeklyMenuCard extends HTMLElement {
     // est configuré. Déclenche le service (jow.suggest ou autre) qui fera
     // choisir une nouvelle recette par l'IA selon les critères fournis.
     const action = this._action();
+    const occupe = this._occupe;
+
+    // Barre de saisie libre : l'utilisateur tape une phrase (ex: "plat
+    // rapide avec du bœuf") et Entrée déclenche jow.suggest avec ce
+    // texte comme criteria pour le jour affiché.
+    const barreSuggest = action
+      ? `<div class="suggest-bar">
+           <input type="text" data-suggest-input="${j.index}" placeholder="Proposer un plat\u2026 (ex : rapide avec du bœuf)"${occupe ? " disabled" : ""}>
+           <button data-suggest-go="${j.index}"${occupe ? " disabled" : ""}>${occupe ? "\u2026" : "Go"}</button>
+         </div>`
+      : "";
+
     const boutonChanger = action
-      ? `<button class="bouton changer" data-remplacer-detail="${j.index}"${this._occupe ? " disabled" : ""}>
-           ${this._occupe ? "Recherche en cours\u2026" : "Changer de recette"}
+      ? `<button class="bouton changer" data-remplacer-detail="${j.index}"${occupe ? " disabled" : ""}>
+           ${occupe ? "Recherche en cours\u2026" : "Changer de recette"}
          </button>`
       : "";
 
@@ -557,6 +600,7 @@ class WeeklyMenuCard extends HTMLElement {
         <h1 class="titre" tabindex="-1">${this._esc(j.nom)}</h1>
         <div class="chiffres">${chiffres.join("")}</div>
         ${compo}
+        ${barreSuggest}
         <div class="actions">
           ${lien ? `<a class="bouton" href="${lien}" target="_blank" rel="noopener noreferrer">Voir la recette ↗</a>` : ""}
           ${boutonChanger}
@@ -802,6 +846,41 @@ class WeeklyMenuCard extends HTMLElement {
     }
   }
 
+  /** Appelle le service configuré avec un critère personnalisé saisi par
+   *  l'utilisateur (barre de saisie). Remplace le criteria par défaut par
+   *  le texte tapé, garde les autres paramètres (weekday, couverts, etc.). */
+  async _suggest(i, texte) {
+    const action = this._action();
+    if (this._occupe || !this._hass || !action || !texte?.trim()) return;
+    const jour = this._jour(i);
+
+    const remplir = (v) => (typeof v === "string"
+      ? v.replace("{date}", jour.date).replace("{weekday}", JOURS[i]).replace("{index}", String(i))
+      : v);
+    const data = Object.fromEntries(
+      Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
+    );
+    // Le critère saisi remplace le criteria par défaut
+    data.criteria = texte.trim();
+
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    try {
+      await this._hass.callService(action.domaine, action.service, data);
+      this._toast(`✓ Recherche lancée pour ${JOURS[i]}`);
+    } catch (err) {
+      console.error(`weekly-menu-card : échec suggest personnalisé`, err);
+      this._toast("✕ Recherche échouée — erreur", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+      setTimeout(() => { this._signature = null; this._render(); }, 8000);
+    }
+  }
+
   _brancher() {
     const R = this.shadowRoot;
 
@@ -833,6 +912,22 @@ class WeeklyMenuCard extends HTMLElement {
 
     R.querySelectorAll("[data-envoyer-jow]").forEach((el) => {
       el.addEventListener("click", () => this._envoyerJow());
+    });
+
+    // Barre de saisie "Proposer un plat" : Entrée ou clic sur Go
+    R.querySelectorAll("[data-suggest-input]").forEach((input) => {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          this._suggest(Number(input.dataset.suggestInput), input.value);
+        }
+      });
+    });
+    R.querySelectorAll("[data-suggest-go]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const input = R.querySelector(`[data-suggest-input="${btn.dataset.suggestGo}"]`);
+        if (input) this._suggest(Number(btn.dataset.suggestGo), input.value);
+      });
     });
 
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule

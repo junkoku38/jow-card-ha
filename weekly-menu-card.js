@@ -202,6 +202,14 @@ const STYLES = `
   .bouton:hover { border-color: var(--gris); }
   .bouton:focus-visible { outline: 2px solid var(--papier); outline-offset: 2px; }
   .bouton[disabled] { opacity: 0.5; cursor: progress; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--encre); color: var(--papier); padding: 10px 20px;
+    border-radius: 8px; font-size: 0.85rem; z-index: 9999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3); opacity: 0;
+    transition: opacity 0.3s; pointer-events: none;
+  }
+  .toast.show { opacity: 0.95; }
   .allergenes { font-size: 0.7rem; color: var(--gris); }
 
   /* Le mode un seul jour supprime l'index : il faut d'autres flèches
@@ -291,6 +299,16 @@ class WeeklyMenuCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Nettoyer _imagesKO : si une entité a changé (last_updated), on
+    // retire son index du Set pour que la nouvelle image puisse s'afficher.
+    for (let i = 0; i < this._entites.length; i++) {
+      const s = hass.states[this._entites[i]];
+      if (!s) continue;
+      const prev = this._hass?.states?.[this._entites[i]];
+      if (prev && prev.last_updated !== s.last_updated && this._imagesKO.has(i)) {
+        this._imagesKO.delete(i);
+      }
+    }
     const sig = this._entites
       .map((id) => {
         const s = hass.states[id];
@@ -309,7 +327,7 @@ class WeeklyMenuCard extends HTMLElement {
     const prevus = JOURS.filter((_, i) => this._jour(i).planned).length;
     return prevus ? 6 + Math.min(prevus, 6) : 3;
   }
-  static getStubConfig() { return { type: "custom:jow-recipe-board" }; }
+  static getStubConfig() { return { type: "custom:weekly-menu-card" }; }
 
   // ----------------------------------------------------------------
 
@@ -572,7 +590,7 @@ class WeeklyMenuCard extends HTMLElement {
                <span class="fleche">+</span></div>`;
       }
       const codes = this._config.show_allergens && j.allergenes.length
-        ? `<span class="codes mono">allergènes ${this._esc(j.allergenes.map((c) => c.code || c.label).join(" · "))}</span>` : "";
+        ? `<span class="codes mono">allergènes ${this._esc(j.allergenes.map((c) => c.code ? `${c.code} ${c.label}` : c.label).join(" · "))}</span>` : "";
       const kcal = this._config.show_calories && j.calories != null
         ? `<span class="kcal-index mono">${j.calories}<i> kcal/portion</i></span>` : "";
       return `<button class="ligne" data-jour="${j.index}">
@@ -590,6 +608,8 @@ class WeeklyMenuCard extends HTMLElement {
   _boutonSemaineSuivante() {
     const action = this._action();
     if (!action) return "";
+    // Respecter le flag plan_next_enabled de l'éditeur (défaut: activé)
+    if (this._config.plan_next_enabled === false) return "";
     return `<div class="index" style="border-top:1px solid var(--filet)">
       <button class="ligne" data-planifier-s1="${this._occupe ? "" : "1"}"${this._occupe ? " disabled" : ""}>
         <span class="jour mono">S+1</span>
@@ -656,8 +676,10 @@ class WeeklyMenuCard extends HTMLElement {
     this._render();
     try {
       await this._hass.callService(domaine, service, data);
+      this._toast(`✓ ${def.label}`);
     } catch (err) {
       console.error(`weekly-menu-card : échec de ${def.service}`, err);
+      this._toast(`✕ ${def.label} — erreur`, true);
     } finally {
       this._occupe = false;
       this._signature = null;
@@ -666,22 +688,54 @@ class WeeklyMenuCard extends HTMLElement {
     }
   }
 
+  /** Affiche un message éphémère en bas de la carte. */
+  _toast(msg, isError = false) {
+    const R = this.shadowRoot;
+    if (!R) return;
+    let el = R.querySelector(".toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "toast";
+      R.appendChild(el);
+    }
+    el.textContent = msg;
+    if (isError) el.style.background = "#a33";
+    else el.style.background = "";
+    requestAnimationFrame(() => el.classList.add("show"));
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+  }
+
   /** Ouvre les recettes de la semaine sur jow.fr dans des onglets.
-   *  L'utilisateur n'a plus qu'à cliquer "Ajouter au menu" sur chacune. */
+   *  L'utilisateur n'a plus qu'à cliquer "Ajouter au menu" sur chacune.
+   *  On ouvre le premier onglet directement (user gesture, pas de popup
+   *  blocker) et les autres via une fenêtre intermédiaire avec des liens. */
   _envoyerJow() {
     const jours = JOURS.map((_, i) => this._jour(i));
     const planifies = jours.filter((j) => j.planned && j.url);
     if (!planifies.length) return;
 
-    // Ouvrir chaque recette dans un nouvel onglet (le navigateur peut
-    // bloquer les popups : on ouvre le premier, puis les autres avec un
-    // léger délai).
-    planifies.forEach((j, i) => {
-      const url = `https://jow.fr/recipes/${this._esc(j.url.split("/").pop())}`;
-      setTimeout(() => {
-        window.open(url, "_blank");
-      }, i * 300);
-    });
+    // Valider les URLs via _url() (filtre javascript:, etc.)
+    const urls = planifies
+      .map((j) => this._url(j.url))
+      .filter(Boolean);
+    if (!urls.length) return;
+
+    // Ouvrir le premier onglet immédiatement (dans le user gesture, pas
+    // bloqué par le popup blocker).
+    window.open(urls[0], "_blank", "noopener,noreferrer");
+
+    // Pour les suivants : ouvrir une fenêtre avec des liens cliquables
+    // (les popups différés sont bloqués par les navigateurs).
+    if (urls.length > 1) {
+      const liens = urls.map((u, i) => `<li><a href="${u}" target="_blank" rel="noopener noreferrer">Recette ${i + 1}</a></li>`).join("");
+      const html = `<html><head><title>Recettes Jow</title><style>body{font-family:system-ui;padding:30px}li{margin:8px 0}a{color:#1a1816}</style></head><body><h2>Ouvrir les recettes sur Jow</h2><ul>${liens}</ul></body></html>`;
+      const w = window.open("", "_blank", "noopener,noreferrer");
+      if (w) {
+        w.document.write(html);
+        w.document.close();
+      }
+    }
   }
 
   _afficher(i) {
@@ -735,6 +789,7 @@ class WeeklyMenuCard extends HTMLElement {
       await this._hass.callService(action.domaine, action.service, data);
     } catch (err) {
       console.error(`weekly-menu-card : échec de ${action.domaine}.${action.service}`, err);
+      this._toast("✕ Recette non remplacée — erreur", true);
     } finally {
       this._occupe = false;
       this._signature = null;

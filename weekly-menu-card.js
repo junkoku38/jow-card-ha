@@ -80,6 +80,13 @@ const ACTIONS_PREDEFINIES = {
     data: { week_offset: 0, keep_checked: true },
     confirm: null,
   },
+  send_jow: {
+    label: "Envoyer à Jow",
+    icon: "🛒",
+    service: null,
+    data: null,
+    confirm: null,
+  },
 };
 
 /* États qui signifient « pas de plat », quel que soit l'intégration. */
@@ -507,11 +514,18 @@ class WeeklyMenuCard extends HTMLElement {
          </button>`
       : "";
 
-    // Boutons d'action prédéfinis (meal_done, clear_meal, refresh_shopping)
+    // Boutons d'action prédéfinis (meal_done, clear_meal, refresh_shopping, send_jow)
     const actionsConfig = this._config.actions || {};
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => actionsConfig[key] !== false)
       .map(([key, def]) => {
+        // Le bouton "Envoyer à Jow" ouvre les recettes dans des onglets,
+        // pas un appel de service.
+        if (key === "send_jow") {
+          return `<button class="bouton action" data-envoyer-jow="1"${this._occupe ? " disabled" : ""}>
+            <span>${def.icon}</span> ${this._esc(def.label)}
+          </button>`;
+        }
         const confirmAttr = def.confirm ? ` data-confirm="${this._esc(def.confirm)}"` : "";
         return `<button class="bouton action" data-action-predefinie="${key}" data-jour-action="${j.index}"${this._occupe ? " disabled" : ""}${confirmAttr}>
           <span>${def.icon}</span> ${this._esc(def.label)}
@@ -652,6 +666,24 @@ class WeeklyMenuCard extends HTMLElement {
     }
   }
 
+  /** Ouvre les recettes de la semaine sur jow.fr dans des onglets.
+   *  L'utilisateur n'a plus qu'à cliquer "Ajouter au menu" sur chacune. */
+  _envoyerJow() {
+    const jours = JOURS.map((_, i) => this._jour(i));
+    const planifies = jours.filter((j) => j.planned && j.url);
+    if (!planifies.length) return;
+
+    // Ouvrir chaque recette dans un nouvel onglet (le navigateur peut
+    // bloquer les popups : on ouvre le premier, puis les autres avec un
+    // léger délai).
+    planifies.forEach((j, i) => {
+      const url = `https://jow.fr/recipes/${this._esc(j.url.split("/").pop())}`;
+      setTimeout(() => {
+        window.open(url, "_blank");
+      }, i * 300);
+    });
+  }
+
   _afficher(i) {
     if (!this._jour(i).planned) return;
     this._selection = i;
@@ -744,6 +776,10 @@ class WeeklyMenuCard extends HTMLElement {
       });
     });
 
+    R.querySelectorAll("[data-envoyer-jow]").forEach((el) => {
+      el.addEventListener("click", () => this._envoyerJow());
+    });
+
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule
     // sur la mise en page typographique.
     const img = R.querySelector("img[data-photo]");
@@ -786,6 +822,7 @@ const LIBELLES = {
   action_meal_done: "Bouton « Marquer comme fait »",
   action_clear_meal: "Bouton « Effacer ce jour »",
   action_refresh_shopping: "Bouton « Régénérer la liste de courses »",
+  action_send_jow: "Bouton « Envoyer à Jow » (ouvre les recettes)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   // ---- Correspondance des attributs (avancé) ----
@@ -914,6 +951,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_meal_done", selector: { boolean: {} } },
         { name: "action_clear_meal", selector: { boolean: {} } },
         { name: "action_refresh_shopping", selector: { boolean: {} } },
+        { name: "action_send_jow", selector: { boolean: {} } },
       ]},
       // ---- Entités ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
@@ -960,6 +998,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_meal_done: (this._config.actions || {}).meal_done !== false,
         action_clear_meal: (this._config.actions || {}).clear_meal !== false,
         action_refresh_shopping: (this._config.actions || {}).refresh_shopping === true,
+        action_send_jow: (this._config.actions || {}).send_jow === true,
       },
       entites: ent,
       attributes_section: {
@@ -1007,6 +1046,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           meal_done: actionsData.action_meal_done !== false,
           clear_meal: actionsData.action_clear_meal !== false,
           refresh_shopping: actionsData.action_refresh_shopping === true,
+          send_jow: actionsData.action_send_jow === true,
         };
 
         this._emettre({

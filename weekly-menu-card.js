@@ -47,12 +47,20 @@ const DEFAUTS = {
   days: 7,
   show_calories: true,
   show_allergens: true,
+  show_week_calories: false,   // Total calories de la semaine en pied de carte
   replace_action: null,    // { service: "domaine.service", data: { … } }
+  // Thèmes par jour : injectés dans le criteria de l'IA
+  // ex: { "lundi": "végétarien", "mardi": "poisson", "vendredi": "plaisir" }
+  day_themes: {},
+  // Ingrédients disponibles (inventaire du frigo) : injectés dans le criteria
+  // ex: "poulet, courgettes, tomates"
+  fridge_ingredients: "",
   // Boutons d'action prédéfinis (activés par défaut, configurables)
   actions: {
     meal_done: true,        // Marquer le repas comme fait
     clear_meal: true,       // Effacer le repas du jour
     refresh_shopping: false,// Régénérer la liste de courses
+    copy_meal: false,       // Copier vers un autre jour (restes)
   },
 };
 
@@ -85,6 +93,13 @@ const ACTIONS_PREDEFINIES = {
     icon: "🛒",
     service: null,
     data: null,
+    confirm: null,
+  },
+  copy_meal: {
+    label: "Copier vers…",
+    icon: "⧉",
+    service: "jow.copy_meal",
+    data: { weekday: "{weekday}" },
     confirm: null,
   },
 };
@@ -519,6 +534,14 @@ class WeeklyMenuCard extends HTMLElement {
             ${codesPied.map((c) => this._esc(c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}${
               estimes ? " — déduits des ingrédients, à vérifier en cas d'allergie" : ""}
           </p>` : ""}
+        ${this._config.show_week_calories && planifies.length ? `
+          <p class="legende mono">
+            ${(() => {
+              const total = planifies.reduce((s, j) => s + (j.calories || 0), 0);
+              const moy = Math.round(total / planifies.length);
+              return `${total} kcal/semaine · ${moy} kcal/jour (${planifies.length}/${jours.length} repas)`;
+            })()}
+          </p>` : ""}
       </div>`;
 
     this._brancher();
@@ -719,8 +742,8 @@ class WeeklyMenuCard extends HTMLElement {
         Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
       );
       data.week_offset = 1;
-      // S'assurer qu'un criteria est présent (fallback si non configuré)
-      if (!data.criteria) data.criteria = "plat varié équilibré";
+      // Enrichir avec le thème du jour et le frigo (fallback si vide)
+      data.criteria = this._criteriaAvecContexte(i, data.criteria) || "plat varié équilibré";
       try {
         await this._hass.callService(action.domaine, action.service, data);
         succes++;
@@ -753,6 +776,37 @@ class WeeklyMenuCard extends HTMLElement {
 
     // Confirmation si nécessaire
     if (def.confirm && !window.confirm(def.confirm)) return;
+
+    // Cas spécial : copy_meal demande un jour cible
+    if (key === "copy_meal") {
+      const choix = window.prompt("Copier vers quel jour ?\n(lundi, mardi, …, dimanche)", JOURS[(jourIndex + 1) % 7]);
+      if (!choix) return;
+      const jourCible = choix.trim().toLowerCase();
+      const idxCible = JOURS.indexOf(jourCible);
+      if (idxCible < 0) { this._toast("✕ Jour non reconnu", true); return; }
+      const data = {
+        weekday: JOURS[jourIndex],
+        to_weekday: JOURS[idxCible],
+        week_offset: this._weekOffset,
+        to_week_offset: this._weekOffset,
+      };
+      this._occupe = true;
+      this._signature = null;
+      this._render();
+      try {
+        await this._hass.callService("jow", "copy_meal", data);
+        this._toast(`✓ Repas copié vers ${JOURS[idxCible]}`);
+      } catch (err) {
+        console.error("weekly-menu-card : échec copy_meal", err);
+        this._toast("✕ Copie échouée — erreur", true);
+      } finally {
+        this._occupe = false;
+        this._signature = null;
+        this._render();
+        setTimeout(() => { this._signature = null; this._render(); }, 3000);
+      }
+      return;
+    }
 
     const [domaine, service] = def.service.split(".", 2);
     if (!domaine || !service) return;
@@ -798,6 +852,21 @@ class WeeklyMenuCard extends HTMLElement {
     requestAnimationFrame(() => el.classList.add("show"));
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+  }
+
+  /** Construit le criteria enrichi : criteria de base + thème du jour +
+   *  ingrédients du frigo. Permet à l'IA de contextualiser la suggestion. */
+  _criteriaAvecContexte(i, criteriaBase) {
+    const parts = [];
+    // Thème du jour (ex: "végétarien", "poisson", "plaisir")
+    const theme = this._config.day_themes?.[JOURS[i]];
+    if (theme) parts.push(theme);
+    // Ingrédients du frigo
+    const frigo = this._config.fridge_ingredients?.trim();
+    if (frigo) parts.push(`avec ${frigo}`);
+    // Critère de base (saisi ou configuré)
+    if (criteriaBase?.trim()) parts.push(criteriaBase.trim());
+    return parts.join(", ");
   }
 
   /** Ouvre les recettes de la semaine sur jow.fr dans des onglets.
@@ -876,6 +945,8 @@ class WeeklyMenuCard extends HTMLElement {
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
     data.week_offset = this._weekOffset;
+    // Enrichir le criteria avec le thème du jour et le frigo
+    data.criteria = this._criteriaAvecContexte(i, data.criteria);
 
     this._occupe = true;
     this._signature = null;
@@ -911,8 +982,8 @@ class WeeklyMenuCard extends HTMLElement {
     const data = Object.fromEntries(
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
-    // Le critère saisi remplace le criteria par défaut
-    data.criteria = texte.trim();
+    // Le critère saisi est enrichi avec le thème du jour et le frigo
+    data.criteria = this._criteriaAvecContexte(i, texte.trim());
     data.week_offset = this._weekOffset;
 
     this._occupe = true;
@@ -1020,6 +1091,17 @@ const LIBELLES = {
   days: "Mode d'affichage",
   show_calories: "Afficher les calories",
   show_allergens: "Afficher les allergènes",
+  show_week_calories: "Afficher le total calories de la semaine",
+  // ---- Thèmes & Frigo ----
+  context_section: "Thèmes par jour & Inventaire du frigo",
+  day_themes_lundi: "Thème lundi (ex : végétarien)",
+  day_themes_mardi: "Thème mardi (ex : poisson)",
+  day_themes_mercredi: "Thème mercredi (ex : pâtes)",
+  day_themes_jeudi: "Thème jeudi (ex : volaille)",
+  day_themes_vendredi: "Thème vendredi (ex : plaisir)",
+  day_themes_samedi: "Thème samedi (ex : cuisine du monde)",
+  day_themes_dimanche: "Thème dimanche (ex : restes du frigo)",
+  fridge_ingredients: "Ingrédients disponibles (séparés par virgules)",
   // ---- Bouton « Changer de recette » ----
   replace_section: "Bouton « Changer de recette » (IA)",
   replace_enabled: "Activer le bouton",
@@ -1039,6 +1121,7 @@ const LIBELLES = {
   action_clear_meal: "Bouton « Effacer ce jour »",
   action_refresh_shopping: "Bouton « Régénérer la liste de courses »",
   action_send_jow: "Bouton « Envoyer à Jow » (ouvre les recettes)",
+  action_copy_meal: "Bouton « Copier vers… » (restes du lendemain)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   // ---- Correspondance des attributs (avancé) ----
@@ -1148,6 +1231,18 @@ class WeeklyMenuCardEditor extends HTMLElement {
       ] } } },
       { name: "show_calories", selector: { boolean: {} } },
       { name: "show_allergens", selector: { boolean: {} } },
+      { name: "show_week_calories", selector: { boolean: {} } },
+      // ---- Thèmes & Frigo ----
+      { type: "expandable", name: "context_section", title: LIBELLES.context_section, schema: [
+        { name: "day_themes_lundi", selector: { text: {} } },
+        { name: "day_themes_mardi", selector: { text: {} } },
+        { name: "day_themes_mercredi", selector: { text: {} } },
+        { name: "day_themes_jeudi", selector: { text: {} } },
+        { name: "day_themes_vendredi", selector: { text: {} } },
+        { name: "day_themes_samedi", selector: { text: {} } },
+        { name: "day_themes_dimanche", selector: { text: {} } },
+        { name: "fridge_ingredients", selector: { text: { multiline: true } } },
+      ]},
       // ---- Bouton « Changer de recette » ----
       { type: "expandable", name: "replace_section", title: LIBELLES.replace_section, schema: [
         { name: "replace_enabled", selector: { boolean: {} } },
@@ -1168,6 +1263,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_clear_meal", selector: { boolean: {} } },
         { name: "action_refresh_shopping", selector: { boolean: {} } },
         { name: "action_send_jow", selector: { boolean: {} } },
+        { name: "action_copy_meal", selector: { boolean: {} } },
       ]},
       // ---- Entités ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
@@ -1198,6 +1294,17 @@ class WeeklyMenuCardEditor extends HTMLElement {
       days: String(this._config.days ?? 7),
       show_calories: this._config.show_calories !== false,
       show_allergens: this._config.show_allergens !== false,
+      show_week_calories: this._config.show_week_calories === true,
+      context_section: {
+        day_themes_lundi: this._config.day_themes?.lundi || "",
+        day_themes_mardi: this._config.day_themes?.mardi || "",
+        day_themes_mercredi: this._config.day_themes?.mercredi || "",
+        day_themes_jeudi: this._config.day_themes?.jeudi || "",
+        day_themes_vendredi: this._config.day_themes?.vendredi || "",
+        day_themes_samedi: this._config.day_themes?.samedi || "",
+        day_themes_dimanche: this._config.day_themes?.dimanche || "",
+        fridge_ingredients: this._config.fridge_ingredients || "",
+      },
       replace_section: {
         replace_enabled: !!ra,
         replace_service: ra?.service || "jow.suggest",
@@ -1215,6 +1322,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_clear_meal: (this._config.actions || {}).clear_meal !== false,
         action_refresh_shopping: (this._config.actions || {}).refresh_shopping === true,
         action_send_jow: (this._config.actions || {}).send_jow === true,
+        action_copy_meal: (this._config.actions || {}).copy_meal === true,
       },
       entites: ent,
       attributes_section: {
@@ -1251,10 +1359,12 @@ class WeeklyMenuCardEditor extends HTMLElement {
         const planNextData = v.plan_next_section || {};
         const actionsData = v.actions_section || {};
         const attrData = v.attributes_section || {};
+        const ctxData = v.context_section || {};
         delete v.replace_section;
         delete v.plan_next_section;
         delete v.actions_section;
         delete v.attributes_section;
+        delete v.context_section;
 
         const action = this._fabriquerAction(replaceData);
         const attributes = this._fabriquerAttributes(attrData);
@@ -1263,7 +1373,16 @@ class WeeklyMenuCardEditor extends HTMLElement {
           clear_meal: actionsData.action_clear_meal !== false,
           refresh_shopping: actionsData.action_refresh_shopping === true,
           send_jow: actionsData.action_send_jow === true,
+          copy_meal: actionsData.action_copy_meal === true,
         };
+
+        // Thèmes par jour + frigo
+        const day_themes = {};
+        for (const j of JOURS) {
+          const val = ctxData[`day_themes_${j}`];
+          if (val) day_themes[j] = val;
+        }
+        const fridge_ingredients = ctxData.fridge_ingredients || "";
 
         this._emettre({
           type: this._config.type,
@@ -1273,6 +1392,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(planNextData.plan_next_enabled === false ? { plan_next_enabled: false } : {}),
           ...(entities.length === 7 ? { entities } : {}),
           ...(attributes ? { attributes } : {}),
+          ...(Object.keys(day_themes).length ? { day_themes } : {}),
+          ...(fridge_ingredients ? { fridge_ingredients } : {}),
           actions,
         });
       });

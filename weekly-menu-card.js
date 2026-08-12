@@ -38,6 +38,7 @@ const CHAMPS = {
   allergens_source: "allergens_source",
   covers: "covers",
   duration: "preparation_time",
+  cooking_time: "cooking_time",
   ingredients: "ingredients",
 };
 
@@ -107,23 +108,42 @@ const STYLES = `
   .sans-photo .titre { font-size: 2rem; line-height: 1.1; letter-spacing: -0.025em; margin-top: 12px; }
 
   .chiffres {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+    display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px;
     margin-top: 14px;
-    font-size: 0.75rem;
-    color: var(--gris);
   }
-  .chiffres .kcal { color: var(--papier); }
+  .chiffre {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 12px;
+    border: 1px solid var(--filet);
+    border-radius: 8px;
+    background: var(--encre-2);
+  }
+  .chiffre .v { font-size: 0.95rem; font-weight: 500; color: var(--papier); line-height: 1; }
+  .chiffre .l { font-size: 0.6rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gris); }
 
-  .compo { margin-top: 13px; font-size: 0.81rem; line-height: 1.7; color: var(--gris); }
-  .compo .q { color: var(--papier); }
-  /* Sans photo : la composition passe en colonne, filet à gauche. */
-  .sans-photo .compo {
-    margin-top: 16px;
-    font-size: 0.87rem;
-    line-height: 1.8;
-    border-left: 1px solid #4A443C;
-    padding-left: 16px;
+  .compo { margin-top: 16px; }
+  .compo-titre {
+    font-size: 0.62rem; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--gris); margin-bottom: 8px;
   }
+  .compo ul {
+    list-style: none; padding: 0; margin: 0;
+    font-size: 0.85rem; line-height: 1.5;
+  }
+  .compo li {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--filet-fin);
+    color: var(--papier);
+  }
+  .compo li:last-child { border-bottom: 0; }
+  .compo li .q {
+    flex: none; min-width: 60px;
+    font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+    font-size: 0.75rem; color: var(--gris);
+  }
+  .compo li .n { flex: 1; }
+  .compo li .opt { font-size: 0.62rem; color: var(--gris); font-style: italic; }
 
   .actions {
     display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
@@ -311,6 +331,7 @@ class WeeklyMenuCard extends HTMLElement {
 
     const cal = this._champ(a, "calories");
     const duree = this._champ(a, "duration");
+    const cuisson = this._champ(a, "cooking_time") || a.cooking_time || null;
 
     return {
       index: i,
@@ -324,6 +345,7 @@ class WeeklyMenuCard extends HTMLElement {
       estimes: this._champ(a, "allergens_source") === "estimated",
       couverts: this._champ(a, "covers") || null,
       preparation: duree || null,
+      cuisson: cuisson == null || cuisson === "" ? null : (Number.isFinite(Number(cuisson)) ? Number(cuisson) : null),
       ingredients: this._ingredients(this._champ(a, "ingredients")),
     };
   }
@@ -415,26 +437,28 @@ class WeeklyMenuCard extends HTMLElement {
     const chiffres = [];
     if (this._config.show_calories) {
       if (j.calories != null) {
-        const parPortion = `<span class="mono kcal">${j.calories} kcal/portion</span>`;
-        const total = j.couverts && j.couverts > 1
-          ? `<span class="mono">${j.calories * j.couverts} kcal total</span>`
-          : "";
-        chiffres.push(parPortion + (total ? " · " + total : ""));
+        const total = j.couverts && j.couverts > 1 ? j.calories * j.couverts : null;
+        chiffres.push(`<div class="chiffre"><span class="v">${j.calories} kcal</span><span class="l">par portion</span></div>`);
+        if (total) chiffres.push(`<div class="chiffre"><span class="v">${total} kcal</span><span class="l">total · ${j.couverts} portions</span></div>`);
       } else {
-        chiffres.push(`<span class="mono">kcal non renseignées</span>`);
+        chiffres.push(`<div class="chiffre"><span class="v">—</span><span class="l">kcal inconnues</span></div>`);
       }
     }
-    if (j.preparation) chiffres.push(`<span class="mono">${j.preparation} min</span>`);
-    if (j.couverts) chiffres.push(`<span class="mono">${j.couverts} couvert${j.couverts > 1 ? "s" : ""}</span>`);
+    if (j.preparation) chiffres.push(`<div class="chiffre"><span class="v">${j.preparation} min</span><span class="l">préparation</span></div>`);
+    if (j.cuisson) chiffres.push(`<div class="chiffre"><span class="v">${j.cuisson} min</span><span class="l">cuisson</span></div>`);
+    if (j.couverts) chiffres.push(`<div class="chiffre"><span class="v">${j.couverts}</span><span class="l">couvert${j.couverts > 1 ? "s" : ""}</span></div>`);
 
-    // Avec photo : une ligne à puces, compacte. Sans : une colonne qui respire.
+    // Liste structurée des ingrédients : quantité en mono à gauche, nom à droite.
     const items = j.ingredients.map((i) => {
-      const q = i.quantity ? `<span class="mono q">${this._esc(i.quantity)}${i.unit ? " " + this._esc(i.unit) : ""}</span> ` : "";
-      return `${q}${this._esc(i.name)}`;
+      const q = i.quantity
+        ? `<span class="q">${this._esc(i.quantity)}${i.unit ? " " + this._esc(i.unit) : ""}</span>`
+        : `<span class="q"></span>`;
+      const opt = i.optional ? ` <span class="opt">facultatif</span>` : "";
+      return `<li>${q}<span class="n">${this._esc(i.name)}${opt}</span></li>`;
     });
     const compo = items.length
-      ? `<p class="compo">${sansPhoto ? items.join("<br>") : items.join(" · ")}</p>`
-      : `<p class="compo">Ingrédients non renseignés.</p>`;
+      ? `<div class="compo"><p class="compo-titre">Ingrédients · ${items.length}</p><ul>${items.join("")}</ul></div>`
+      : `<div class="compo"><p class="compo-titre">Ingrédients</p><p style="color:var(--gris);font-size:0.85rem">Non renseignés.</p></div>`;
 
     const all = j.allergenes.length
       ? `Allergènes · ${j.allergenes.map((c) => (c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}`

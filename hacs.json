@@ -1,0 +1,8 @@
+{
+  "name": "Menu de la semaine (jow)",
+  "content_in_root": true,
+  "render_readme": true,
+  "filename": "weekly-menu-card.js",
+  "country": ["FR"],
+  "homeassistant": "2024.1.0"
+}

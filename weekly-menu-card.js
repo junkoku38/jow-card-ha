@@ -654,18 +654,16 @@ class WeeklyMenuCardEditor extends HTMLElement {
     return Object.fromEntries(JOURS.map((j, i) => [j, liste[i]]));
   }
 
-  /** Assemble replace_action à partir des trois champs de l'éditeur.
-   *  Le jeton {date} évite que la carte connaisse la signature du service. */
+  /** Assemble replace_action à partir des champs de l'éditeur.
+   *  Préserve les données existantes du replace_action (criteria, covers,
+   *  weather_entity, ai_entity…) et ne met à jour que service et query. */
   _fabriquerAction(service, query) {
     if (!service || !service.includes(".")) return null;
-    return {
-      service,
-      data: {
-        ...(query ? { query } : {}),
-        date: "{date}",
-        ...(service === "jow.plan_meal" ? { choice: 1 } : {}),
-      },
-    };
+    const existing = this._config.replace_action?.data || {};
+    const data = { ...existing };
+    if (query) data.query = query;
+    else delete data.query;
+    return { service, data };
   }
 
   _emettre(config) {
@@ -731,8 +729,11 @@ class WeeklyMenuCardEditor extends HTMLElement {
         const v = { ...e.detail.value };
         // Les sélecteurs d'entités sont dans une section « expandable » :
         // ha-form les regroupe sous v.entites au lieu de v.lundi, v.mardi…
+        // On merge avec les entités existantes pour ne pas perdre celles
+        // qui n'ont pas été modifiées.
         const entitesGroupe = v.entites || {};
-        const entities = JOURS.map((j) => entitesGroupe[j] || v[j]).filter(Boolean);
+        const existantes = this._entitesCourantes();
+        const entities = JOURS.map((j) => entitesGroupe[j] || v[j] || existantes[j]).filter(Boolean);
         JOURS.forEach((j) => delete v[j]);
         delete v.entites;
         const action = this._fabriquerAction(v.replace_service, v.replace_query);

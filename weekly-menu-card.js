@@ -434,6 +434,16 @@ class WeeklyMenuCard extends HTMLElement {
       ? `Allergènes · ${j.allergenes.map((c) => (c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}`
       : "Sans allergène signalé";
 
+    // Bouton « Changer de recette » : présent uniquement si un replace_action
+    // est configuré. Déclenche le service (jow.suggest ou autre) qui fera
+    // choisir une nouvelle recette par l'IA selon les critères fournis.
+    const action = this._action();
+    const boutonChanger = action
+      ? `<button class="bouton changer" data-remplacer-detail="${j.index}"${this._occupe ? " disabled" : ""}>
+           ${this._occupe ? "Recherche en cours\u2026" : "Changer de recette"}
+         </button>`
+      : "";
+
     return `
       ${photo ? `<img class="photo" src="${photo}" alt="" data-photo="${j.index}">` : ""}
       <div class="detail${sansPhoto ? " sans-photo" : ""}">
@@ -443,6 +453,7 @@ class WeeklyMenuCard extends HTMLElement {
         ${compo}
         <div class="actions">
           ${lien ? `<a class="bouton" href="${lien}" target="_blank" rel="noopener noreferrer">Voir la recette ↗</a>` : ""}
+          ${boutonChanger}
           ${this._config.show_allergens ? `<span class="allergenes mono">${this._esc(all)}</span>` : ""}
         </div>
       </div>`;
@@ -555,6 +566,10 @@ class WeeklyMenuCard extends HTMLElement {
 
     R.querySelectorAll("[data-remplacer]").forEach((el) => {
       el.addEventListener("click", () => this._remplacer(Number(el.dataset.remplacer)));
+    });
+
+    R.querySelectorAll("[data-remplacer-detail]").forEach((el) => {
+      el.addEventListener("click", () => this._remplacer(Number(el.dataset.remplacerDetail)));
     });
 
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule

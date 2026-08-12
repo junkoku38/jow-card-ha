@@ -580,6 +580,11 @@ class WeeklyMenuCard extends HTMLElement {
       this._occupe = false;
       this._signature = null;
       this._render();
+      // Le service jow.suggest met du temps (IA + recherche). L'état de
+      // l'entité peut arriver après le finally : on force un re-render
+      // après 3s et 8s pour récupérer la nouvelle recette.
+      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+      setTimeout(() => { this._signature = null; this._render(); }, 8000);
     }
   }
 

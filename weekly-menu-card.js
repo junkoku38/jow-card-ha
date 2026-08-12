@@ -679,6 +679,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
   }
 
   _donnees() {
+    const ent = this._entitesCourantes();
     return {
       title: this._config.title || "",
       days: String(this._config.days ?? 7),
@@ -687,7 +688,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
       replace_service: this._config.replace_action?.service || "",
       replace_query: this._config.replace_action?.data?.query || "",
       replace_label: this._config.replace_label || "",
-      ...this._entitesCourantes(),
+      entites: ent,
     };
   }
 
@@ -698,8 +699,12 @@ class WeeklyMenuCardEditor extends HTMLElement {
       this._form.computeLabel = (s) => LIBELLES[s.name] || s.name;
       this._form.addEventListener("value-changed", (e) => {
         const v = { ...e.detail.value };
-        const entities = JOURS.map((j) => v[j]).filter(Boolean);
+        // Les sélecteurs d'entités sont dans une section « expandable » :
+        // ha-form les regroupe sous v.entites au lieu de v.lundi, v.mardi…
+        const entitesGroupe = v.entites || {};
+        const entities = JOURS.map((j) => entitesGroupe[j] || v[j]).filter(Boolean);
         JOURS.forEach((j) => delete v[j]);
+        delete v.entites;
         const action = this._fabriquerAction(v.replace_service, v.replace_query);
         delete v.replace_service;
         delete v.replace_query;

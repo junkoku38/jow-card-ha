@@ -798,3 +798,5 @@ if (!window.customCards.some((c) => c.type === "weekly-menu-card")) {
     preview: true,
   });
 }
+
+export {};

@@ -278,6 +278,17 @@ const STYLES = `
     color: var(--gris);
   }
   .vide-total { padding: 34px 22px; text-align: center; color: var(--gris); font-size: 0.87rem; }
+  .semaine-bascule {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 22px 0; font-size: 0.7rem; color: var(--gris);
+  }
+  .semaine-bascule button {
+    border: 1px solid var(--filet); border-radius: 6px; background: none;
+    color: var(--papier); font: inherit; font-size: 0.72rem; padding: 4px 10px;
+    cursor: pointer; opacity: 0.7;
+  }
+  .semaine-bascule button:hover { opacity: 1; border-color: var(--gris); }
+  .semaine-bascule button.actif { opacity: 1; border-color: var(--gris); }
 
   @media (max-width: 420px) {
     .detail, .index, .legende { padding-left: 16px; padding-right: 16px; }
@@ -292,6 +303,7 @@ class WeeklyMenuCard extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._selection = null;   // index du jour affiché en détail
+    this._weekOffset = 0;     // 0 = semaine courante, 1 = semaine prochaine
     this._imagesKO = new Set();
     this._signature = null;
   }
@@ -302,12 +314,25 @@ class WeeklyMenuCard extends HTMLElement {
     this._config = { ...DEFAUTS, ...config };
     this._config.days = Number(this._config.days) === 1 ? 1 : 7;
     this._champs = { ...CHAMPS, ...(config.attributes || {}) };
-    this._entites = this._config.entities || JOURS.map((j) => `${this._config.prefix}${j}`);
-    if (this._entites.length !== 7) {
+    this._entitesBase = this._config.entities || JOURS.map((j) => `${this._config.prefix}${j}`);
+    if (this._entitesBase.length !== 7) {
       throw new Error("weekly-menu-card : il faut exactement 7 entités, de lundi à dimanche.");
     }
     this._signature = null;
     this._occupe = false;
+  }
+
+  /** Entités effectivement lues, selon la semaine affichée (S0 ou S+1).
+   *  Pour S+1, on ajoute le suffixe _s1 aux entités ha-jow
+   *  (sensor.jow_lundi_s1, etc.). Si l'entité n'existe pas, la carte
+   *  affiche "Rien de prévu" normalement. */
+  get _entites() {
+    if (this._weekOffset === 0) return this._entitesBase;
+    return this._entitesBase.map((id) => {
+      // sensor.jow_lundi -> sensor.jow_lundi_s1
+      if (id.endsWith("_s1")) return id;
+      return id + "_s1";
+    });
   }
 
   get hass() { return this._hass; }
@@ -329,7 +354,7 @@ class WeeklyMenuCard extends HTMLElement {
         const s = hass.states[id];
         return s ? `${s.state}:${s.last_updated}` : "absent";
       })
-      .join("|") + `|${this._selection}|${this._occupe}|${[...this._imagesKO].join(",")}`;
+      .join("|") + `|${this._weekOffset}|${this._selection}|${this._occupe}|${[...this._imagesKO].join(",")}`;
     if (sig === this._signature) return;
     this._signature = sig;
     this._render();
@@ -474,9 +499,16 @@ class WeeklyMenuCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
       <div class="carte">
+        <div class="semaine-bascule">
+          <span>${this._weekOffset === 0 ? "Cette semaine" : "Semaine prochaine"}</span>
+          <span>
+            <button data-semaine="0" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
+            <button data-semaine="1" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
+          </span>
+        </div>
         ${vedette == null ? `
           <p class="vide-total">${this._entites.some((id) => this._hass.states[id])
-            ? "Aucun repas planifié cette semaine."
+            ? "Aucun repas planifié " + (this._weekOffset === 0 ? "cette semaine." : "pour la semaine prochaine.")
             : "Aucune des entités configurées n'existe. Vérifiez la configuration de la carte."}</p>
           ${this._action() ? this._barreSuggestVide() : ""}`
           : this._vueDetail(jours[vedette], planifies.length)}
@@ -654,6 +686,9 @@ class WeeklyMenuCard extends HTMLElement {
     if (!action) return "";
     // Respecter le flag plan_next_enabled de l'éditeur (défaut: activé)
     if (this._config.plan_next_enabled === false) return "";
+    // Afficher le bouton seulement si on est sur la semaine courante
+    // (sur S+1, le bouton "Planifier S+1" n'a pas de sens)
+    if (this._weekOffset !== 0) return "";
     return `<div class="index" style="border-top:1px solid var(--filet)">
       <button class="ligne" data-planifier-s1="${this._occupe ? "" : "1"}"${this._occupe ? " disabled" : ""}>
         <span class="jour mono">S+1</span>
@@ -825,6 +860,7 @@ class WeeklyMenuCard extends HTMLElement {
     const data = Object.fromEntries(
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
+    data.week_offset = this._weekOffset;
 
     this._occupe = true;
     this._signature = null;
@@ -862,6 +898,7 @@ class WeeklyMenuCard extends HTMLElement {
     );
     // Le critère saisi remplace le criteria par défaut
     data.criteria = texte.trim();
+    data.week_offset = this._weekOffset;
 
     this._occupe = true;
     this._signature = null;
@@ -927,6 +964,20 @@ class WeeklyMenuCard extends HTMLElement {
       btn.addEventListener("click", () => {
         const input = R.querySelector(`[data-suggest-input="${btn.dataset.suggestGo}"]`);
         if (input) this._suggest(Number(btn.dataset.suggestGo), input.value);
+      });
+    });
+
+    // Bascule entre semaine courante (S) et semaine prochaine (S+1)
+    R.querySelectorAll("[data-semaine]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const offset = Number(btn.dataset.semaine);
+        if (offset !== this._weekOffset) {
+          this._weekOffset = offset;
+          this._selection = null;
+          this._imagesKO.clear();
+          this._signature = null;
+          this._render();
+        }
       });
     });
 

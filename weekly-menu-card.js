@@ -414,9 +414,15 @@ class WeeklyMenuCard extends HTMLElement {
 
     const chiffres = [];
     if (this._config.show_calories) {
-      chiffres.push(j.calories != null
-        ? `<span class="mono kcal">${j.calories} kcal</span>`
-        : `<span class="mono">kcal non renseignées</span>`);
+      if (j.calories != null) {
+        const parPortion = `<span class="mono kcal">${j.calories} kcal/portion</span>`;
+        const total = j.couverts && j.couverts > 1
+          ? `<span class="mono">${j.calories * j.couverts} kcal total</span>`
+          : "";
+        chiffres.push(parPortion + (total ? " · " + total : ""));
+      } else {
+        chiffres.push(`<span class="mono">kcal non renseignées</span>`);
+      }
     }
     if (j.preparation) chiffres.push(`<span class="mono">${j.preparation} min</span>`);
     if (j.couverts) chiffres.push(`<span class="mono">${j.couverts} couvert${j.couverts > 1 ? "s" : ""}</span>`);
@@ -485,7 +491,7 @@ class WeeklyMenuCard extends HTMLElement {
       const codes = this._config.show_allergens && j.allergenes.length
         ? `<span class="codes mono">allergènes ${this._esc(j.allergenes.map((c) => c.code || c.label).join(" · "))}</span>` : "";
       const kcal = this._config.show_calories && j.calories != null
-        ? `<span class="kcal-index mono">${j.calories}<i> kcal</i></span>` : "";
+        ? `<span class="kcal-index mono">${j.calories}<i> kcal/portion</i></span>` : "";
       return `<button class="ligne" data-jour="${j.index}">
         <span class="jour mono">${COURTS[j.index]}</span>
         <span class="nom">${this._esc(j.nom)}${codes}</span>

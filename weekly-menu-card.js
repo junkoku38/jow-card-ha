@@ -408,6 +408,7 @@ class WeeklyMenuCard extends HTMLElement {
             : "Aucune des entités configurées n'existe. Vérifiez la configuration de la carte."}</p>`
           : this._vueDetail(jours[vedette], planifies.length)}
         ${unSeulJour ? "" : this._index(jours, vedette)}
+        ${unSeulJour ? "" : this._boutonSemaineSuivante()}
         ${this._config.show_allergens && codesPied.length ? `
           <p class="legende">
             ${codesPied.map((c) => this._esc(c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}${
@@ -525,6 +526,53 @@ class WeeklyMenuCard extends HTMLElement {
     }).join("")}</div>`;
   }
 
+  /** Bouton pour planifier toute la semaine prochaine via jow.suggest.
+   *  Appelle le service 7 fois (une par jour) avec week_offset=1, en
+   *  dédupliquant les recettes déjà planifiées. */
+  _boutonSemaineSuivante() {
+    const action = this._action();
+    if (!action) return "";
+    return `<div class="index" style="border-top:1px solid var(--filet)">
+      <button class="ligne" data-planifier-s1="${this._occupe ? "" : "1"}"${this._occupe ? " disabled" : ""}>
+        <span class="jour mono">S+1</span>
+        <span class="nom vide">${this._occupe ? "Planification en cours\u2026" : "Planifier la semaine prochaine"}</span>
+        <span class="fleche">+</span>
+      </button>
+    </div>`;
+  }
+
+  async _planifierSemaineSuivante() {
+    const action = this._action();
+    if (this._occupe || !this._hass || !action) return;
+
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+
+    // Appeler le service pour chaque jour, avec week_offset=1
+    for (let i = 0; i < 7; i++) {
+      const remplir = (v) => (typeof v === "string"
+        ? v.replace("{weekday}", JOURS[i]).replace("{index}", String(i))
+        : v);
+      const data = Object.fromEntries(
+        Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
+      );
+      data.week_offset = 1;
+      try {
+        await this._hass.callService(action.domaine, action.service, data);
+      } catch (err) {
+        console.error(`weekly-menu-card : échec planification S+1 ${JOURS[i]}`, err);
+      }
+      this._signature = null;
+      this._render();
+    }
+
+    this._occupe = false;
+    this._signature = null;
+    this._render();
+    setTimeout(() => { this._signature = null; this._render(); }, 5000);
+  }
+
   _afficher(i) {
     if (!this._jour(i).planned) return;
     this._selection = i;
@@ -605,6 +653,10 @@ class WeeklyMenuCard extends HTMLElement {
 
     R.querySelectorAll("[data-remplacer-detail]").forEach((el) => {
       el.addEventListener("click", () => this._remplacer(Number(el.dataset.remplacerDetail)));
+    });
+
+    R.querySelectorAll("[data-planifier-s1]").forEach((el) => {
+      el.addEventListener("click", () => this._planifierSemaineSuivante());
     });
 
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule

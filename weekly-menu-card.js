@@ -402,7 +402,13 @@ class WeeklyMenuCard extends HTMLElement {
     const sig = this._entites
       .map((id) => {
         const s = hass.states[id];
-        return s ? `${s.state}:${s.last_updated}` : "absent";
+        if (!s) return "absent";
+        // Inclure covers et ingredients dans la signature pour détecter
+        // les changements d'attributs (set_covers ne change pas le state
+        // ni last_updated, seulement les extra_state_attributes).
+        const covers = s.attributes?.covers || "";
+        const ingCount = (s.attributes?.ingredients || []).length;
+        return `${s.state}:${s.last_updated}:${covers}:${ingCount}`;
       })
       .join("|") + `|${this._weekOffset}|${this._selection}|${this._occupe}|${[...this._imagesKO].join(",")}`;
     if (sig === this._signature) return;

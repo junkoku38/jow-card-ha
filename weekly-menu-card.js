@@ -1062,6 +1062,9 @@ class WeeklyMenuCard extends HTMLElement {
     const actuel = jour.couverts || this._config.covers || 2;
     const nouveau = Math.max(1, Math.min(20, actuel + delta));
     if (nouveau === actuel) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
     try {
       await this._hass.callService("jow", "set_covers", {
         weekday: JOURS[i],
@@ -1072,6 +1075,13 @@ class WeeklyMenuCard extends HTMLElement {
     } catch (err) {
       console.error("weekly-menu-card : échec set_covers", err);
       this._toast("✕ Couverts non modifiés — erreur", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      // Forcer le re-render après que l'entité se soit mise à jour
+      setTimeout(() => { this._signature = null; this._render(); }, 1500);
+      setTimeout(() => { this._signature = null; this._render(); }, 3000);
     }
   }
 

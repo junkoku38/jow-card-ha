@@ -924,8 +924,10 @@ class WeeklyMenuCard extends HTMLElement {
         }
         // Afficher dans une fenêtre avec des liens cliquables
         const liens = recipes.slice(0, 20).map((r) => {
-          const url = r.url ? this._url(r.url) : "";
-          return `<li>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">` : ""}<b>${this._esc(r.name || r.title || "Recette")}</b>${url ? "</a>" : ""}${r.calories ? ` — ${r.calories} kcal` : ""}</li>`;
+          const id = r.id || r._id;
+          const url = id ? `https://jow.fr/recipes/${id}` : (r.url ? this._url(r.url) : "");
+          const nom = r.name || r.title || "Recette";
+          return `<li>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">` : ""}<b>${this._esc(nom)}</b>${url ? "</a>" : ""}${r.calories ? ` — ${r.calories} kcal` : ""}</li>`;
         }).join("");
         const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:30px;max-width:600px;margin:auto}li{margin:10px 0}a{color:#1a1816;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><ul>${liens}</ul><p style="color:#999;font-size:0.8rem;margin-top:20px">Cliquez sur une recette puis « Ajouter au menu » sur jow.fr.</p></body></html>`;
         const w = window.open("", "_blank");

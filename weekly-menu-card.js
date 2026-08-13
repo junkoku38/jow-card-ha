@@ -338,13 +338,17 @@ class WeeklyMenuCard extends HTMLElement {
   }
 
   /** Entités effectivement lues, selon la semaine affichée (S0 ou S+1).
-   *  Pour S+1, on ajoute le suffixe _s1 aux entités ha-jow
-   *  (sensor.jow_lundi_s1, etc.). Si l'entité n'existe pas, la carte
-   *  affiche "Rien de prévu" normalement. */
+   *  Pour S+1, on utilise entities_s1 si configuré, sinon on ajoute
+   *  automatiquement le suffixe _s1 aux entités S0. */
   get _entites() {
     if (this._weekOffset === 0) return this._entitesBase;
+    // Si l'utilisateur a configuré des entités S+1 explicites, les utiliser
+    const s1 = this._config.entities_s1;
+    if (s1 && Object.keys(s1).some((k) => s1[k])) {
+      return JOURS.map((j) => s1[j] || `${this._entitesBase[JOURS.indexOf(j)]}_s1`);
+    }
+    // Sinon, dérivation automatique
     return this._entitesBase.map((id) => {
-      // sensor.jow_lundi -> sensor.jow_lundi_s1
       if (id.endsWith("_s1")) return id;
       return id + "_s1";
     });
@@ -1124,6 +1128,7 @@ const LIBELLES = {
   action_copy_meal: "Bouton « Copier vers… » (restes du lendemain)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
+  entites_s1: "Entités S+1 (semaine prochaine — auto si vide)",
   // ---- Correspondance des attributs (avancé) ----
   attributes_section: "Correspondance des attributs (avancé)",
   attributes_help: "À modifier uniquement si vos entités utilisent d'autres noms d'attributs que ha-jow",
@@ -1265,9 +1270,12 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_send_jow", selector: { boolean: {} } },
         { name: "action_copy_meal", selector: { boolean: {} } },
       ]},
-      // ---- Entités ----
+      // ---- Entités S0 ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
         schema: JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })) },
+      // ---- Entités S+1 ----
+      { type: "expandable", name: "entites_s1", title: LIBELLES.entites_s1,
+        schema: JOURS.map((j) => ({ name: `${j}_s1`, selector: { entity: { domain: "sensor" } } })) },
       // ---- Correspondance des attributs (avancé) ----
       { type: "expandable", name: "attributes_section", title: LIBELLES.attributes_section, schema: [
         { name: "attr_name", selector: { text: {} } },
@@ -1287,6 +1295,11 @@ class WeeklyMenuCardEditor extends HTMLElement {
 
   _donnees() {
     const ent = this._entitesCourantes();
+    const entS1 = {};
+    const entitiesS1 = this._config.entities_s1 || {};
+    for (const j of JOURS) {
+      entS1[`${j}_s1`] = entitiesS1[j] || entitiesS1[`${j}_s1`] || `${ent[j]}_s1`;
+    }
     const ra = this._config.replace_action;
     const attrs = this._config.attributes || {};
     return {
@@ -1325,6 +1338,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_copy_meal: (this._config.actions || {}).copy_meal === true,
       },
       entites: ent,
+      entites_s1: entS1,
       attributes_section: {
         attr_name: attrs.name ?? CHAMPS.name ?? "",
         attr_planned: attrs.planned ?? CHAMPS.planned ?? "",
@@ -1348,11 +1362,19 @@ class WeeklyMenuCardEditor extends HTMLElement {
       this._form.computeLabel = (s) => LIBELLES[s.name] || s.name;
       this._form.addEventListener("value-changed", (e) => {
         const v = { ...e.detail.value };
-        // Entités : merge avec les existantes
+        // Entités S0 : merge avec les existantes
         const entitesGroupe = v.entites || {};
         const existantes = this._entitesCourantes();
         const entities = JOURS.map((j) => entitesGroupe[j] || existantes[j]).filter(Boolean);
         delete v.entites;
+
+        // Entités S+1 : merge avec les existantes (auto-déduit si vide)
+        const entitesS1Groupe = v.entites_s1 || {};
+        const entitiesS1 = {};
+        for (const j of JOURS) {
+          entitiesS1[j] = entitesS1Groupe[`${j}_s1`] || "";
+        }
+        delete v.entites_s1;
 
         // Sections expandable
         const replaceData = v.replace_section || {};
@@ -1391,6 +1413,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(action ? { replace_action: action } : { replace_action: null }),
           ...(planNextData.plan_next_enabled === false ? { plan_next_enabled: false } : {}),
           ...(entities.length === 7 ? { entities } : {}),
+          ...(Object.keys(entitiesS1).some((j) => entitiesS1[j]) ? { entities_s1: entitiesS1 } : {}),
           ...(attributes ? { attributes } : {}),
           ...(Object.keys(day_themes).length ? { day_themes } : {}),
           ...(fridge_ingredients ? { fridge_ingredients } : {}),

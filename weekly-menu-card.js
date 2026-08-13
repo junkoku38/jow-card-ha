@@ -1085,10 +1085,19 @@ class WeeklyMenuCard extends HTMLElement {
     } finally {
       this._occupe = false;
       // HA n'envoie pas d'update au frontend quand seuls les attributs
-      // changent (pas le state). On récupère les states frais via WS.
+      // changent. On récupère l'entité spécifique via WS et on l'injecte
+      // dans this._hass.states avant le re-render.
+      const entityId = this._entites[i];
       try {
-        const states = await this._hass.callWS({ id: Date.now(), type: "get_states" });
-        if (states) this._hass.states = states;
+        const resp = await this._hass.callWS({ id: Date.now(), type: "get_states" });
+        if (resp && Array.isArray(resp)) {
+          const fresh = resp.find((e) => e.entity_id === entityId);
+          if (fresh) {
+            // Cloner l'objet hass.states pour pouvoir le modifier
+            const newStates = { ...this._hass.states, [entityId]: fresh };
+            this._hass = { ...this._hass, states: newStates };
+          }
+        }
       } catch (e) { /* ignore */ }
       this._signature = null;
       this._render();

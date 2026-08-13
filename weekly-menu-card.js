@@ -1163,7 +1163,12 @@ class WeeklyMenuCard extends HTMLElement {
     // Plats récents depuis l'intégration
     const recentsJow = jowContext?.recent_meals || [];
     const recents = recentsJow.length
-      ? recentsJow.map((r) => `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${r.date})</span></li>`).join("")
+      ? recentsJow.map((r) => {
+          const excl = r.excluded !== false;
+          return `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${r.date})</span> ${
+            excl ? `<button data-clear-recent="${r.date}" style="margin-left:8px;padding:2px 8px;font-size:0.7rem;cursor:pointer;border:1px solid #666;border-radius:4px;background:none;color:inherit">Retirer</button>` : '<span style="color:#4a9;font-size:0.7rem">✓ retiré</span>'
+          }</li>`;
+        }).join("")
       : "<li>Aucun</li>";
 
     // Ingrédients exclus du compte Jow
@@ -1236,6 +1241,24 @@ class WeeklyMenuCard extends HTMLElement {
     // Brancher la fermeture
     R.querySelectorAll("[data-info-close]").forEach((el) => {
       el.addEventListener("click", () => container.remove());
+    });
+
+    // Boutons "Retirer" pour l'anti-répétition
+    R.querySelectorAll("[data-clear-recent]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const date = btn.dataset.clearRecent;
+        btn.disabled = true;
+        btn.textContent = "…";
+        try {
+          await this._hass.callService("jow", "clear_recent", { date });
+          btn.textContent = "✓ retiré";
+          btn.style.color = "#4a9";
+          btn.disabled = false;
+        } catch (err) {
+          btn.textContent = "✕ erreur";
+          btn.style.color = "#a33";
+        }
+      });
     });
   }
 

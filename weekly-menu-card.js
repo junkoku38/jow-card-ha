@@ -908,8 +908,9 @@ class WeeklyMenuCard extends HTMLElement {
       this._signature = null;
       this._render();
       try {
-        const resp = await this._hass.callService("jow", "sync_favorites", {}, { return_response: true });
-        const recipes = resp?.recipes || [];
+        const resp = await this._hass.callService("jow", "sync_favorites", {});
+        // callService avec SupportsResponse.ONLY retourne la response directement
+        const recipes = (resp && resp.recipes) || (resp && resp.result && resp.result.recipes) || [];
         if (!recipes.length) {
           this._toast("Aucun favori trouvé", true);
           return;

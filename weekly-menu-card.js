@@ -1177,6 +1177,18 @@ class WeeklyMenuCard extends HTMLElement {
       ? excluded.map((e) => this._esc(e)).join(", ")
       : "Aucun";
 
+    // Ingrédients interdits (banned)
+    const banned = jowContext?.banned_ingredients || [];
+    const bannedHtml = banned.length
+      ? banned.map((b) => `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid #a33;border-radius:4px">${this._esc(b)} <button data-remove-banned="${this._esc(b)}" style="border:none;background:none;color:#a33;cursor:pointer;font-size:0.8rem">✕</button></span>`).join("")
+      : "Aucun";
+
+    // Ingrédients à éviter (avoid)
+    const avoid = jowContext?.avoid_ingredients || [];
+    const avoidHtml = avoid.length
+      ? avoid.map((a) => `<span style="display:inline-block;margin:2px 4px;padding:2px 8px;border:1px solid #c93;border-radius:4px">${this._esc(a)} <button data-remove-avoid="${this._esc(a)}" style="border:none;background:none;color:#c93;cursor:pointer;font-size:0.8rem">✕</button></span>`).join("")
+      : "Aucun";
+
     // Agent IA
     const aiEnt = this._config.replace_action?.data?.ai_entity || "Non configuré";
 
@@ -1203,6 +1215,16 @@ class WeeklyMenuCard extends HTMLElement {
         <div class="info-section">
           <h4>Ingrédients exclus (Jow)</h4>
           <p>${excludedHtml}</p>
+        </div>
+        <div class="info-section">
+          <h4>Ingrédients interdits (allergies)</h4>
+          <div>${bannedHtml}</div>
+          <div style="margin-top:6px"><input type="text" data-add-banned placeholder="Ajouter un ingrédient interdit…" style="padding:4px 8px;font-size:0.78rem;border:1px solid var(--filet);border-radius:4px;background:var(--encre-2);color:var(--papier);width:100%;box-sizing:border-box"></div>
+        </div>
+        <div class="info-section">
+          <h4>Ingrédients à éviter (préférence)</h4>
+          <div>${avoidHtml}</div>
+          <div style="margin-top:6px"><input type="text" data-add-avoid placeholder="Ajouter un ingrédient à éviter…" style="padding:4px 8px;font-size:0.78rem;border:1px solid var(--filet);border-radius:4px;background:var(--encre-2);color:var(--papier);width:100%;box-sizing:border-box"></div>
         </div>
         <div class="info-section">
           <h4>Plats récents (anti-répétition)</h4>
@@ -1257,6 +1279,58 @@ class WeeklyMenuCard extends HTMLElement {
         } catch (err) {
           btn.textContent = "✕ erreur";
           btn.style.color = "#a33";
+        }
+      });
+    });
+
+    // Boutons "✕" pour retirer un ingrédient interdit
+    R.querySelectorAll("[data-remove-banned]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ing = btn.dataset.removeBanned;
+        try {
+          await this._hass.callService("jow", "add_banned", { ingredient: ing, action: "remove" });
+          const span = btn.parentElement;
+          span.style.opacity = "0.3";
+          span.style.textDecoration = "line-through";
+        } catch (err) { console.error(err); }
+      });
+    });
+
+    // Inputs "Ajouter" un ingrédient interdit
+    R.querySelectorAll("[data-add-banned]").forEach((input) => {
+      input.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter" && input.value.trim()) {
+          try {
+            await this._hass.callService("jow", "add_banned", { ingredient: input.value.trim(), action: "add" });
+            input.value = "";
+            input.placeholder = "✓ Ajouté — rouvrez ℹ pour voir";
+          } catch (err) { input.placeholder = "✕ Erreur"; }
+        }
+      });
+    });
+
+    // Boutons "✕" pour retirer un ingrédient à éviter
+    R.querySelectorAll("[data-remove-avoid]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ing = btn.dataset.removeAvoid;
+        try {
+          await this._hass.callService("jow", "add_avoid", { ingredient: ing, action: "remove" });
+          const span = btn.parentElement;
+          span.style.opacity = "0.3";
+          span.style.textDecoration = "line-through";
+        } catch (err) { console.error(err); }
+      });
+    });
+
+    // Inputs "Ajouter" un ingrédient à éviter
+    R.querySelectorAll("[data-add-avoid]").forEach((input) => {
+      input.addEventListener("keydown", async (e) => {
+        if (e.key === "Enter" && input.value.trim()) {
+          try {
+            await this._hass.callService("jow", "add_avoid", { ingredient: input.value.trim(), action: "add" });
+            input.value = "";
+            input.placeholder = "✓ Ajouté — rouvrez ℹ pour voir";
+          } catch (err) { input.placeholder = "✕ Erreur"; }
         }
       });
     });

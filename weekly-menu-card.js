@@ -611,6 +611,12 @@ class WeeklyMenuCard extends HTMLElement {
           : this._vueDetail(jours[vedette], planifies.length)}
         ${unSeulJour ? "" : this._index(jours, vedette)}
         ${unSeulJour ? "" : this._boutonSemaineSuivante()}
+        ${(this._config.actions || {}).refresh_shopping ? `
+          <div style="padding:8px 22px 4px">
+            <button class="bouton" data-action-predefinie="refresh_shopping" data-jour-action="${vedette ?? 0}"${this._occupe ? " disabled" : ""}>
+              ⟳ Régénérer la liste de courses
+            </button>
+          </div>` : ""}
         ${this._config.show_allergens && codesPied.length ? `
           <p class="legende">
             ${codesPied.map((c) => this._esc(c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}${
@@ -712,10 +718,11 @@ class WeeklyMenuCard extends HTMLElement {
          </button>`
       : "";
 
-    // Boutons d'action prédéfinis (meal_done, clear_meal, refresh_shopping, send_jow)
+    // Boutons d'action prédéfinis (meal_done, clear_meal, send_jow, copy_meal, favoris)
+    // refresh_shopping est déplacé en bas de la carte (pas dans le détail)
     const actionsConfig = this._config.actions || {};
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
-      .filter(([key]) => actionsConfig[key] !== false)
+      .filter(([key]) => key !== "refresh_shopping" && actionsConfig[key] !== false)
       .map(([key, def]) => {
         // Le bouton "Envoyer à Jow" ouvre les recettes dans des onglets,
         // pas un appel de service.

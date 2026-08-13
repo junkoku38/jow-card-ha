@@ -1275,7 +1275,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         schema: JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })) },
       // ---- Entités S+1 ----
       { type: "expandable", name: "entites_s1", title: LIBELLES.entites_s1,
-        schema: JOURS.map((j) => ({ name: `${j}_s1`, selector: { entity: { domain: "sensor" } } })) },
+        schema: JOURS.map((j) => ({ name: `s1${j}`, selector: { entity: { domain: "sensor" } } })) },
       // ---- Correspondance des attributs (avancé) ----
       { type: "expandable", name: "attributes_section", title: LIBELLES.attributes_section, schema: [
         { name: "attr_name", selector: { text: {} } },
@@ -1298,7 +1298,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
     const entS1 = {};
     const entitiesS1 = this._config.entities_s1 || {};
     for (const j of JOURS) {
-      entS1[`${j}_s1`] = entitiesS1[j] || entitiesS1[`${j}_s1`] || `${ent[j]}_s1`;
+      entS1[`s1${j}`] = entitiesS1[j] || `${ent[j]}_s1`;
     }
     const ra = this._config.replace_action;
     const attrs = this._config.attributes || {};
@@ -1372,7 +1372,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         const entitesS1Groupe = v.entites_s1 || {};
         const entitiesS1 = {};
         for (const j of JOURS) {
-          entitiesS1[j] = entitesS1Groupe[`${j}_s1`] || "";
+          entitiesS1[j] = entitesS1Groupe[`s1${j}`] || "";
         }
         delete v.entites_s1;
 

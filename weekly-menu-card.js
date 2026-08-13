@@ -50,6 +50,7 @@ const DEFAUTS = {
   show_week_calories: false,   // Total calories de la semaine en pied de carte
   show_month: false,           // Vue mensuelle compacte (4 semaines)
   replace_action: null,    // { service: "domaine.service", data: { … } }
+  replace_ai_prompt: "",   // Prompt IA personnalisé (remplace le prompt par défaut)
   // Thèmes par jour : injectés dans le criteria de l'IA
   // ex: { "lundi": "végétarien", "mardi": "poisson", "vendredi": "plaisir" }
   day_themes: {},
@@ -845,6 +846,7 @@ class WeeklyMenuCard extends HTMLElement {
       data.week_offset = 1;
       // Enrichir avec le thème du jour et le frigo (fallback si vide)
       data.criteria = this._criteriaAvecContexte(i, data.criteria) || "plat varié équilibré";
+      if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
       try {
         await this._hass.callService(action.domaine, action.service, data);
         succes++;
@@ -1198,6 +1200,8 @@ class WeeklyMenuCard extends HTMLElement {
     data.week_offset = this._weekOffset;
     // Enrichir le criteria avec le thème du jour et le frigo
     data.criteria = this._criteriaAvecContexte(i, data.criteria);
+    // Prompt IA personnalisé
+    if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
 
     this._occupe = true;
     this._signature = null;
@@ -1236,6 +1240,7 @@ class WeeklyMenuCard extends HTMLElement {
     // Le critère saisi est enrichi avec le thème du jour et le frigo
     data.criteria = this._criteriaAvecContexte(i, texte.trim());
     data.week_offset = this._weekOffset;
+    if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
 
     this._occupe = true;
     this._signature = null;
@@ -1409,6 +1414,7 @@ const LIBELLES = {
   replace_covers: "Nombre de couverts (portions)",
   replace_weather: "Entité météo (adapte selon le temps)",
   replace_ai: "Agent IA (génère la requête de recherche Jow)",
+  replace_ai_prompt: "Prompt IA personnalisé (remplace le prompt par défaut)",
   replace_limit: "Nombre de suggestions à récupérer",
   // ---- Bouton « Planifier la semaine prochaine » ----
   plan_next_section: "Bouton « Planifier la semaine prochaine »",
@@ -1552,6 +1558,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "replace_covers", selector: { number: { min: 1, max: 12, mode: "slider" } } },
         { name: "replace_weather", selector: { entity: { domain: ["weather"] } } },
         { name: "replace_ai", selector: { entity: { domain: ["ai_task"] } } },
+        { name: "replace_ai_prompt", selector: { text: { multiline: true } } },
         { name: "replace_limit", selector: { number: { min: 1, max: 20, mode: "slider" } } },
       ]},
       // ---- Bouton « Planifier la semaine prochaine » ----
@@ -1623,6 +1630,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         replace_covers: ra?.data?.covers || 2,
         replace_weather: ra?.data?.weather_entity || "",
         replace_ai: ra?.data?.ai_entity || "",
+        replace_ai_prompt: this._config.replace_ai_prompt || "",
         replace_limit: ra?.data?.limit || 5,
       },
       plan_next_section: {
@@ -1717,6 +1725,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(attributes ? { attributes } : {}),
           ...(Object.keys(day_themes).length ? { day_themes } : {}),
           ...(fridge_ingredients ? { fridge_ingredients } : {}),
+          ...(replaceData.replace_ai_prompt ? { replace_ai_prompt: replaceData.replace_ai_prompt } : {}),
           actions,
         });
       });

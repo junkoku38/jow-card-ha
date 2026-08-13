@@ -928,8 +928,9 @@ class WeeklyMenuCard extends HTMLElement {
           return `<li>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">` : ""}<b>${this._esc(r.name || r.title || "Recette")}</b>${url ? "</a>" : ""}${r.calories ? ` — ${r.calories} kcal` : ""}</li>`;
         }).join("");
         const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:30px;max-width:600px;margin:auto}li{margin:10px 0}a{color:#1a1816;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><ul>${liens}</ul><p style="color:#999;font-size:0.8rem;margin-top:20px">Cliquez sur une recette puis « Ajouter au menu » sur jow.fr.</p></body></html>`;
-        const w = window.open("", "_blank", "noopener,noreferrer");
+        const w = window.open("", "_blank");
         if (w) {
+          w.document.open();
           w.document.write(html);
           w.document.close();
         } else {
@@ -1080,8 +1081,9 @@ class WeeklyMenuCard extends HTMLElement {
     if (urls.length > 1) {
       const liens = urls.map((u, i) => `<li><a href="${u}" target="_blank" rel="noopener noreferrer">Recette ${i + 1}</a></li>`).join("");
       const html = `<html><head><title>Recettes Jow</title><style>body{font-family:system-ui;padding:30px}li{margin:8px 0}a{color:#1a1816}</style></head><body><h2>Ouvrir les recettes sur Jow</h2><ul>${liens}</ul></body></html>`;
-      const w = window.open("", "_blank", "noopener,noreferrer");
+      const w = window.open("", "_blank");
       if (w) {
+        w.document.open();
         w.document.write(html);
         w.document.close();
       }

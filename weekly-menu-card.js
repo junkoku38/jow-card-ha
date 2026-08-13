@@ -603,6 +603,12 @@ class WeeklyMenuCard extends HTMLElement {
             <button data-semaine="1" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
           </span>
         </div>
+        ${(this._config.actions || {}).refresh_shopping ? `
+          <div style="padding:8px 22px 4px">
+            <button class="bouton" data-action-predefinie="refresh_shopping" data-jour-action="${vedette ?? 0}"${this._occupe ? " disabled" : ""}>
+              ⟳ Régénérer la liste de courses
+            </button>
+          </div>` : ""}
         ${vedette == null ? `
           <p class="vide-total">${this._entites.some((id) => this._hass.states[id])
             ? "Aucun repas planifié " + (this._weekOffset === 0 ? "cette semaine." : "pour la semaine prochaine.")
@@ -611,12 +617,6 @@ class WeeklyMenuCard extends HTMLElement {
           : this._vueDetail(jours[vedette], planifies.length)}
         ${unSeulJour ? "" : this._index(jours, vedette)}
         ${unSeulJour ? "" : this._boutonSemaineSuivante()}
-        ${(this._config.actions || {}).refresh_shopping ? `
-          <div style="padding:8px 22px 4px">
-            <button class="bouton" data-action-predefinie="refresh_shopping" data-jour-action="${vedette ?? 0}"${this._occupe ? " disabled" : ""}>
-              ⟳ Régénérer la liste de courses
-            </button>
-          </div>` : ""}
         ${this._config.show_allergens && codesPied.length ? `
           <p class="legende">
             ${codesPied.map((c) => this._esc(c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}${

@@ -336,6 +336,23 @@ const STYLES = `
   }
   .semaine-bascule button:hover { opacity: 1; border-color: var(--gris); }
   .semaine-bascule button.actif { opacity: 1; border-color: var(--gris); }
+  .info-btn { border: none; background: none; color: var(--gris); font-size: 0.8rem; cursor: pointer; opacity: 0.5; }
+  .info-btn:hover { opacity: 1; }
+  .info-popup {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: var(--encre); color: var(--papier); border-radius: 12px;
+    padding: 24px; max-width: 500px; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 10000;
+    font-size: 0.82rem; line-height: 1.5;
+  }
+  .info-popup h3 { margin: 0 0 12px; font-size: 1rem; }
+  .info-popup .info-section { margin-bottom: 14px; }
+  .info-popup .info-section h4 { margin: 0 0 4px; font-size: 0.78rem; color: var(--gris); text-transform: uppercase; }
+  .info-popup .info-section p { margin: 0; }
+  .info-popup .info-section ul { margin: 4px 0; padding-left: 18px; }
+  .info-popup .info-close { position: absolute; top: 12px; right: 16px; cursor: pointer; font-size: 1.2rem; opacity: 0.6; }
+  .info-popup .info-close:hover { opacity: 1; }
+  .info-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9999; }
 
   @media (max-width: 420px) {
     .detail, .index, .legende { padding-left: 16px; padding-right: 16px; }
@@ -609,6 +626,7 @@ class WeeklyMenuCard extends HTMLElement {
           <span>
             <button data-semaine="0" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
             <button data-semaine="1" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
+            <button class="info-btn" data-info="1" title="Contexte IA">ℹ</button>
           </span>
         </div>
         ${(this._config.actions || {}).refresh_shopping ? `
@@ -1106,6 +1124,94 @@ class WeeklyMenuCard extends HTMLElement {
     }
   }
 
+  /** Affiche une popup avec le contexte IA (allergies, préférences, frigo,
+   *  thèmes, plats récents, météo, prompt). */
+  _afficherInfo() {
+    const R = this.shadowRoot;
+    if (!R) return;
+
+    // Collecter le contexte
+    const themes = this._config.day_themes || {};
+    const themesList = Object.entries(themes).map(([j, t]) => `<li>${j} : ${this._esc(t)}</li>`).join("");
+    const frigo = this._config.fridge_ingredients?.trim();
+    const prompt = this._config.replace_ai_prompt?.trim();
+    const criteria = this._config.replace_action?.data?.criteria || "";
+
+    // Météo
+    const weatherEnt = this._config.replace_action?.data?.weather_entity;
+    let meteo = "Non configurée";
+    if (weatherEnt && this._hass.states[weatherEnt]) {
+      const s = this._hass.states[weatherEnt];
+      const temp = s.attributes?.temperature;
+      meteo = `${s.state}${temp ? `, ${temp}°C` : ""}`;
+    }
+
+    // Plats récents (depuis les entités affichées)
+    const recents = JOURS.map((_, i) => this._jour(i))
+      .filter((j) => j.planned)
+      .map((j) => `<li>${this._esc(j.nom)}</li>`)
+      .join("");
+
+    // Allergènes de la semaine
+    const allergenes = JOURS.map((_, i) => this._jour(i))
+      .filter((j) => j.planned && j.allergenes.length)
+      .flatMap((j) => j.allergenes);
+    const allergenesUniq = [...new Map(allergenes.map((a) => [a.label, a])).values()]
+      .map((a) => a.code ? `${a.code} ${a.label}` : a.label)
+      .join(" · ");
+
+    // Agent IA
+    const aiEnt = this._config.replace_action?.data?.ai_entity || "Non configuré";
+
+    const html = `
+      <div class="info-overlay" data-info-close="1"></div>
+      <div class="info-popup">
+        <span class="info-close" data-info-close="1">✕</span>
+        <h3>Contexte de l'IA</h3>
+        <div class="info-section">
+          <h4>Allergènes de la semaine</h4>
+          <p>${allergenesUniq ? this._esc(allergenesUniq) : "Aucun signalé"}</p>
+        </div>
+        <div class="info-section">
+          <h4>Plats planifiés cette semaine</h4>
+          ${recents ? `<ul>${recents}</ul>` : "<p>Aucun</p>"}
+        </div>
+        <div class="info-section">
+          <h4>Thèmes par jour</h4>
+          ${themesList ? `<ul>${themesList}</ul>` : "<p>Aucun thème configuré</p>"}
+        </div>
+        <div class="info-section">
+          <h4>Ingrédients du frigo</h4>
+          <p>${frigo ? this._esc(frigo) : "Non renseigné"}</p>
+        </div>
+        <div class="info-section">
+          <h4>Météo</h4>
+          <p>${this._esc(meteo)}</p>
+        </div>
+        <div class="info-section">
+          <h4>Agent IA</h4>
+          <p>${this._esc(aiEnt)}</p>
+        </div>
+        <div class="info-section">
+          <h4>Critère par défaut</h4>
+          <p>${criteria ? this._esc(criteria) : "Aucun"}</p>
+        </div>
+        <div class="info-section">
+          <h4>Prompt IA personnalisé</h4>
+          <p>${prompt ? this._esc(prompt) : "Par défaut (non personnalisé)"}</p>
+        </div>
+      </div>`;
+
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    R.appendChild(container);
+
+    // Brancher la fermeture
+    R.querySelectorAll("[data-info-close]").forEach((el) => {
+      el.addEventListener("click", () => container.remove());
+    });
+  }
+
   /** Construit le criteria enrichi : criteria de base + thème du jour +
    *  ingrédients du frigo. Permet à l'IA de contextualiser la suggestion. */
   _criteriaAvecContexte(i, criteriaBase) {
@@ -1321,6 +1427,11 @@ class WeeklyMenuCard extends HTMLElement {
           this._render();
         }
       });
+    });
+
+    // Bouton info (contexte IA)
+    R.querySelectorAll("[data-info]").forEach((btn) => {
+      btn.addEventListener("click", () => this._afficherInfo());
     });
 
     // Boutons +/- couverts

@@ -1084,11 +1084,14 @@ class WeeklyMenuCard extends HTMLElement {
       this._toast("✕ Couverts non modifiés — erreur", true);
     } finally {
       this._occupe = false;
+      // HA n'envoie pas d'update au frontend quand seuls les attributs
+      // changent (pas le state). On récupère les states frais via WS.
+      try {
+        const states = await this._hass.callWS({ id: Date.now(), type: "get_states" });
+        if (states) this._hass.states = states;
+      } catch (e) { /* ignore */ }
       this._signature = null;
       this._render();
-      // Forcer le re-render après que l'entité se soit mise à jour
-      setTimeout(() => { this._signature = null; this._render(); }, 1500);
-      setTimeout(() => { this._signature = null; this._render(); }, 3000);
     }
   }
 

@@ -1126,11 +1126,25 @@ class WeeklyMenuCard extends HTMLElement {
 
   /** Affiche une popup avec le contexte IA (allergies, préférences, frigo,
    *  thèmes, plats récents, météo, prompt). */
-  _afficherInfo() {
+  async _afficherInfo() {
     const R = this.shadowRoot;
     if (!R) return;
 
-    // Collecter le contexte
+    // Récupérer le contexte depuis l'intégration via WebSocket
+    let jowContext = null;
+    try {
+      const resp = await this._hass.callWS({
+        id: Date.now(),
+        type: "call_service",
+        domain: "jow",
+        service: "get_context",
+        service_data: {},
+        return_response: true,
+      });
+      jowContext = resp?.response || resp?.result?.response || {};
+    } catch (e) { /* ignore */ }
+
+    // Collecter le contexte local
     const themes = this._config.day_themes || {};
     const themesList = Object.entries(themes).map(([j, t]) => `<li>${j} : ${this._esc(t)}</li>`).join("");
     const frigo = this._config.fridge_ingredients?.trim();
@@ -1146,22 +1160,23 @@ class WeeklyMenuCard extends HTMLElement {
       meteo = `${s.state}${temp ? `, ${temp}°C` : ""}`;
     }
 
-    // Plats récents (depuis les entités affichées)
-    const recents = JOURS.map((_, i) => this._jour(i))
-      .filter((j) => j.planned)
-      .map((j) => `<li>${this._esc(j.nom)}</li>`)
-      .join("");
+    // Plats récents depuis l'intégration
+    const recentsJow = jowContext?.recent_meals || [];
+    const recents = recentsJow.length
+      ? recentsJow.map((r) => `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${r.date})</span></li>`).join("")
+      : "<li>Aucun</li>";
 
-    // Allergènes de la semaine
-    const allergenes = JOURS.map((_, i) => this._jour(i))
-      .filter((j) => j.planned && j.allergenes.length)
-      .flatMap((j) => j.allergenes);
-    const allergenesUniq = [...new Map(allergenes.map((a) => [a.label, a])).values()]
-      .map((a) => a.code ? `${a.code} ${a.label}` : a.label)
-      .join(" · ");
+    // Ingrédients exclus du compte Jow
+    const excluded = jowContext?.excluded_ingredients || [];
+    const excludedHtml = excluded.length
+      ? excluded.map((e) => this._esc(e)).join(", ")
+      : "Aucun";
 
     // Agent IA
     const aiEnt = this._config.replace_action?.data?.ai_entity || "Non configuré";
+
+    // Connexion Jow
+    const jowConnected = jowContext?.jow_connected ? "✓ Connecté" : "✕ Non connecté";
 
     const html = `
       <div class="info-overlay" data-info-close="1"></div>
@@ -1169,12 +1184,24 @@ class WeeklyMenuCard extends HTMLElement {
         <span class="info-close" data-info-close="1">✕</span>
         <h3>Contexte de l'IA</h3>
         <div class="info-section">
-          <h4>Allergènes de la semaine</h4>
-          <p>${allergenesUniq ? this._esc(allergenesUniq) : "Aucun signalé"}</p>
+          <h4>Compte Jow</h4>
+          <p>${jowConnected}</p>
         </div>
         <div class="info-section">
-          <h4>Plats planifiés cette semaine</h4>
-          ${recents ? `<ul>${recents}</ul>` : "<p>Aucun</p>"}
+          <h4>Allergies / interdits (Jow)</h4>
+          <p>${jowContext?.allergies ? this._esc(jowContext.allergies) : "Aucune"}</p>
+        </div>
+        <div class="info-section">
+          <h4>Préférences (Jow)</h4>
+          <p>${jowContext?.preferences ? this._esc(jowContext.preferences) : "Aucune"}</p>
+        </div>
+        <div class="info-section">
+          <h4>Ingrédients exclus (Jow)</h4>
+          <p>${excludedHtml}</p>
+        </div>
+        <div class="info-section">
+          <h4>Plats récents (anti-répétition)</h4>
+          <ul>${recents}</ul>
         </div>
         <div class="info-section">
           <h4>Thèmes par jour</h4>

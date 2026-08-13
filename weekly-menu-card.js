@@ -922,19 +922,50 @@ class WeeklyMenuCard extends HTMLElement {
           this._toast("Aucun favori trouvé — token Jow requis", true);
           return;
         }
-        // Afficher dans une fenêtre avec des liens cliquables
-        const liens = recipes.slice(0, 20).map((r) => {
+        // Afficher dans une fenêtre avec des boutons "Planifier"
+        const liens = recipes.slice(0, 20).map((r, idx) => {
           const id = r.id || r._id;
-          const url = id ? `https://jow.fr/recipes/${id}` : (r.url ? this._url(r.url) : "");
           const nom = r.name || r.title || "Recette";
-          return `<li>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">` : ""}<b>${this._esc(nom)}</b>${url ? "</a>" : ""}${r.calories ? ` — ${r.calories} kcal` : ""}</li>`;
+          const cal = r.calories ? ` — ${r.calories} kcal` : "";
+          const img = r.imageUrl ? `<img src="https://static.jow.fr/${r.imageUrl}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" alt="">` : "";
+          return `<li style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #eee">
+            ${img}
+            <span style="flex:1"><b>${this._esc(nom)}</b><span style="color:#999;font-size:0.8rem">${cal}</span></span>
+            <button data-plan-fav="${idx}" data-fav-name="${this._esc(nom)}" style="padding:6px 12px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#f5f5f5">Planifier</button>
+          </li>`;
         }).join("");
-        const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:30px;max-width:600px;margin:auto}li{margin:10px 0}a{color:#1a1816;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><ul>${liens}</ul><p style="color:#999;font-size:0.8rem;margin-top:20px">Cliquez sur une recette puis « Ajouter au menu » sur jow.fr.</p></body></html>`;
+        const jourLabel = JOURS[this._selection ?? this._aujourdhui()];
+        const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:20px;max-width:600px;margin:auto}h2{margin-bottom:10px}.jour{color:#666;font-size:0.85rem;margin-bottom:15px}button:hover{background:#e0e0e0}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><p class="jour">Cliquez « Planifier » pour ajouter au ${jourLabel}</p><ul style="list-style:none;padding:0">${liens}</ul></body></html>`;
         const w = window.open("", "_blank");
         if (w) {
           w.document.open();
           w.document.write(html);
           w.document.close();
+          // Brancher les boutons Planifier
+          w.document.querySelectorAll("[data-plan-fav]").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+              const idx = Number(btn.dataset.planFav);
+              const rec = recipes[idx];
+              const recipeId = rec.id || rec._id;
+              const nom = rec.name || rec.title;
+              btn.disabled = true;
+              btn.textContent = "…";
+              try {
+                // Appeler jow.plan_meal avec le titre comme requête
+                await this._hass.callService("jow", "plan_meal", {
+                  query: nom,
+                  weekday: JOURS[this._selection ?? this._aujourdhui()],
+                  week_offset: this._weekOffset,
+                  choice: 1,
+                });
+                btn.textContent = "✓ Planifié";
+                btn.style.background = "#c8e6c9";
+              } catch (err) {
+                btn.textContent = "✕ Erreur";
+                btn.style.background = "#ffcdd2";
+              }
+            });
+          });
         } else {
           this._toast("Popup bloquée", true);
         }

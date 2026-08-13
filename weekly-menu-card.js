@@ -48,6 +48,7 @@ const DEFAUTS = {
   show_calories: true,
   show_allergens: true,
   show_week_calories: false,   // Total calories de la semaine en pied de carte
+  show_month: false,           // Vue mensuelle compacte (4 semaines)
   replace_action: null,    // { service: "domaine.service", data: { … } }
   // Thèmes par jour : injectés dans le criteria de l'IA
   // ex: { "lundi": "végétarien", "mardi": "poisson", "vendredi": "plaisir" }
@@ -100,6 +101,13 @@ const ACTIONS_PREDEFINIES = {
     icon: "⧉",
     service: "jow.copy_meal",
     data: { weekday: "{weekday}" },
+    confirm: null,
+  },
+  favoris: {
+    label: "Choisir parmi mes favoris",
+    icon: "★",
+    service: "jow.sync_favorites",
+    data: {},
     confirm: null,
   },
 };
@@ -232,6 +240,29 @@ const STYLES = `
   }
   .suggest-bar button:hover { border-color: var(--gris); }
   .suggest-bar button:disabled { opacity: 0.5; cursor: progress; }
+  .covers-adj { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .covers-adj button {
+    border: 1px solid var(--filet); border-radius: 50%; background: none;
+    color: var(--papier); width: 28px; height: 28px; font: inherit; font-size: 0.9rem;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .covers-adj button:hover { border-color: var(--gris); }
+  .covers-adj span { font-size: 0.78rem; color: var(--gris); }
+  .stock-btn {
+    border: none; background: none; color: var(--gris); font-size: 0.7rem;
+    cursor: pointer; opacity: 0.4; margin-left: auto; padding: 2px 6px;
+  }
+  .stock-btn:hover { opacity: 1; color: #a33; }
+  .ligne.dragging { opacity: 0.4; }
+  .ligne.drag-over { outline: 2px dashed var(--gris); outline-offset: -2px; }
+  .mois { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--filet); }
+  .mois-semaine { background: var(--encre); padding: 6px 4px; }
+  .mois-semaine .titre-s { font-size: 0.65rem; color: var(--gris); margin-bottom: 4px; text-transform: uppercase; }
+  .mois-jour { display: flex; align-items: center; gap: 4px; padding: 3px 0; font-size: 0.72rem; cursor: pointer; }
+  .mois-jour:hover { opacity: 0.7; }
+  .mois-jour .court { color: var(--gris); width: 12px; font-size: 0.62rem; }
+  .mois-jour .plat { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mois-jour .plat.vide { color: var(--gris); font-style: italic; }
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--encre); color: var(--papier); padding: 10px 20px;
@@ -501,8 +532,55 @@ class WeeklyMenuCard extends HTMLElement {
     return new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
   }
 
+  /** Vue mensuelle compacte : 4 semaines (S-1, S, S+1, S+2) en grille. */
+  _vueMensuelle() {
+    const semaines = [-1, 0, 1, 2];
+    const cellules = semaines.map((offset) => {
+      const jours = JOURS.map((_, i) => {
+        const id = this._weekOffset === 0
+          ? this._entitesBase.map((e) => offset === 0 ? e : e + `_s${offset}`)[i]
+          : this._entitesBase.map((e) => e + `_s${offset}`)[i];
+        const s = this._hass.states[id];
+        if (!s) return { index: i, planned: false, nom: "", offset };
+        const a = s.attributes || {};
+        const planned = this._champ(a, "planned") ?? (s.state && s.state !== "Rien de prévu" && s.state !== "unavailable");
+        return {
+          index: i,
+          planned: !!planned,
+          nom: planned ? (this._champ(a, "name") || s.state) : "",
+          offset,
+        };
+      });
+      const label = offset === 0 ? "Cette semaine" : offset === -1 ? "Sem. dernière" : `S+${offset}`;
+      const lignes = jours.map((j) => {
+        if (j.planned) {
+          return `<div class="mois-jour" data-mois-jour="${j.index}" data-mois-offset="${offset}">
+            <span class="court mono">${COURTS[j.index]}</span>
+            <span class="plat">${this._esc(j.nom)}</span>
+          </div>`;
+        }
+        return `<div class="mois-jour">
+          <span class="court mono">${COURTS[j.index]}</span>
+          <span class="plat vide">—</span>
+        </div>`;
+      }).join("");
+      return `<div class="mois-semaine"><div class="titre-s">${label}</div>${lignes}</div>`;
+    }).join("");
+    return `<div class="carte"><div class="semaine-bascule">
+      <span>Vue mensuelle</span>
+      <button data-semaine="0">Quitter</button>
+    </div><div class="mois">${cellules}</div></div>`;
+  }
+
   _render() {
     if (!this._hass || !this._config) return;
+
+    // Vue mensuelle compacte (4 semaines)
+    if (this._config.show_month) {
+      this.shadowRoot.innerHTML = `<style>${STYLES}</style>${this._vueMensuelle()}`;
+      this._brancher();
+      return;
+    }
 
     const jours = JOURS.map((_, i) => this._jour(i));
     const vedette = this._indexAffiche(jours);
@@ -602,7 +680,7 @@ class WeeklyMenuCard extends HTMLElement {
         ? `<span class="q">${this._esc(i.quantity)}${i.unit ? " " + this._esc(i.unit) : ""}</span>`
         : `<span class="q"></span>`;
       const opt = i.optional ? ` <span class="opt">facultatif</span>` : "";
-      return `<li>${q}<span class="n">${this._esc(i.name)}${opt}</span></li>`;
+      return `<li>${q}<span class="n">${this._esc(i.name)}${opt}</span><button class="stock-btn" data-stock="${this._esc(i.name)}" title="Déjà en stock — retirer de la liste">✕</button></li>`;
     });
     const compo = items.length
       ? `<div class="compo"><p class="compo-titre">Ingrédients · ${items.length}</p><ul>${items.join("")}</ul></div>`
@@ -658,6 +736,11 @@ class WeeklyMenuCard extends HTMLElement {
         <p class="surtitre mono"><span>${this._esc(surtitre)}</span>${nav}</p>
         <h1 class="titre" tabindex="-1">${this._esc(j.nom)}</h1>
         <div class="chiffres">${chiffres.join("")}</div>
+        <div class="covers-adj">
+          <button data-covers-minus="${j.index}"${this._occupe ? " disabled" : ""}>−</button>
+          <span>${j.couverts || this._config.covers || 2} couvert${(j.couverts || this._config.covers || 2) > 1 ? "s" : ""}</span>
+          <button data-covers-plus="${j.index}"${this._occupe ? " disabled" : ""}>+</button>
+        </div>
         ${compo}
         ${barreSuggest}
         <div class="actions">
@@ -683,11 +766,11 @@ class WeeklyMenuCard extends HTMLElement {
         // Sans recherche configurée, le « + » n'aurait rien à faire :
         // la ligne reste inerte plutôt que de simuler une action.
         return this._action()
-          ? `<button class="ligne" data-remplacer="${j.index}"${this._occupe ? " disabled" : ""}>
+          ? `<button class="ligne" data-remplacer="${j.index}" data-drop-jour="${j.index}"${this._occupe ? " disabled" : ""}>
                <span class="jour mono">${COURTS[j.index]}</span>
                <span class="nom vide">${this._occupe ? "En cours\u2026" : "Rien de prévu \u2014 en proposer un"}</span>
                <span class="fleche">+</span></button>`
-          : `<div class="ligne inerte">
+          : `<div class="ligne inerte" data-drop-jour="${j.index}">
                <span class="jour mono">${COURTS[j.index]}</span>
                <span class="nom vide">Rien de prévu</span>
                <span class="fleche">+</span></div>`;
@@ -696,7 +779,7 @@ class WeeklyMenuCard extends HTMLElement {
         ? `<span class="codes mono">allergènes ${this._esc(j.allergenes.map((c) => c.code ? `${c.code} ${c.label}` : c.label).join(" · "))}</span>` : "";
       const kcal = this._config.show_calories && j.calories != null
         ? `<span class="kcal-index mono">${j.calories}<i> kcal/portion</i></span>` : "";
-      return `<button class="ligne" data-jour="${j.index}">
+      return `<button class="ligne" data-jour="${j.index}" data-drag-jour="${j.index}" data-drop-jour="${j.index}" draggable="true">
         <span class="jour mono">${COURTS[j.index]}</span>
         <span class="nom">${this._esc(j.nom)}${codes}</span>
         ${kcal}
@@ -812,6 +895,42 @@ class WeeklyMenuCard extends HTMLElement {
       return;
     }
 
+    // Cas spécial : favoris affiche les recettes dans une fenêtre
+    if (key === "favoris") {
+      this._occupe = true;
+      this._signature = null;
+      this._render();
+      try {
+        const resp = await this._hass.callService("jow", "sync_favorites", {}, { return_response: true });
+        const recipes = resp?.recipes || [];
+        if (!recipes.length) {
+          this._toast("Aucun favori trouvé", true);
+          return;
+        }
+        // Afficher dans une fenêtre avec des liens cliquables
+        const liens = recipes.slice(0, 20).map((r) => {
+          const url = r.url ? this._url(r.url) : "";
+          return `<li>${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer">` : ""}<b>${this._esc(r.name || r.title || "Recette")}</b>${url ? "</a>" : ""}${r.calories ? ` — ${r.calories} kcal` : ""}</li>`;
+        }).join("");
+        const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:30px;max-width:600px;margin:auto}li{margin:10px 0}a{color:#1a1816;text-decoration:none}a:hover{text-decoration:underline}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><ul>${liens}</ul><p style="color:#999;font-size:0.8rem;margin-top:20px">Cliquez sur une recette puis « Ajouter au menu » sur jow.fr.</p></body></html>`;
+        const w = window.open("", "_blank", "noopener,noreferrer");
+        if (w) {
+          w.document.write(html);
+          w.document.close();
+        } else {
+          this._toast("Popup bloquée", true);
+        }
+      } catch (err) {
+        console.error("weekly-menu-card : échec favoris", err);
+        this._toast("✕ Favoris indisponibles — token requis", true);
+      } finally {
+        this._occupe = false;
+        this._signature = null;
+        this._render();
+      }
+      return;
+    }
+
     const [domaine, service] = def.service.split(".", 2);
     if (!domaine || !service) return;
 
@@ -856,6 +975,55 @@ class WeeklyMenuCard extends HTMLElement {
     requestAnimationFrame(() => el.classList.add("show"));
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
+  }
+
+  /** Déplace un plat d'un jour à un autre (copy_meal + clear_meal source). */
+  async _deplacerPlat(from, to) {
+    if (this._occupe || !this._hass) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    try {
+      await this._hass.callService("jow", "copy_meal", {
+        weekday: JOURS[from],
+        to_weekday: JOURS[to],
+        week_offset: this._weekOffset,
+        to_week_offset: this._weekOffset,
+      });
+      await this._hass.callService("jow", "clear_meal", {
+        weekday: JOURS[from],
+        week_offset: this._weekOffset,
+      });
+      this._toast(`✓ Plat déplacé vers ${JOURS[to]}`);
+    } catch (err) {
+      console.error("weekly-menu-card : échec déplacement", err);
+      this._toast("✕ Déplacement échoué — erreur", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+    }
+  }
+
+  /** Change le nombre de couverts d'un jour via le service jow.set_covers. */
+  async _changerCouverts(i, delta) {
+    const jour = this._jour(i);
+    if (!jour?.planned || this._occupe || !this._hass) return;
+    const actuel = jour.couverts || this._config.covers || 2;
+    const nouveau = Math.max(1, Math.min(20, actuel + delta));
+    if (nouveau === actuel) return;
+    try {
+      await this._hass.callService("jow", "set_covers", {
+        weekday: JOURS[i],
+        week_offset: this._weekOffset,
+        covers: nouveau,
+      });
+      this._toast(`✓ ${nouveau} couvert${nouveau > 1 ? "s" : ""} pour ${JOURS[i]}`);
+    } catch (err) {
+      console.error("weekly-menu-card : échec set_covers", err);
+      this._toast("✕ Couverts non modifiés — erreur", true);
+    }
   }
 
   /** Construit le criteria enrichi : criteria de base + thème du jour +
@@ -1071,6 +1239,52 @@ class WeeklyMenuCard extends HTMLElement {
       });
     });
 
+    // Boutons +/- couverts
+    R.querySelectorAll("[data-covers-minus]").forEach((btn) => {
+      btn.addEventListener("click", () => this._changerCouverts(Number(btn.dataset.coversMinus), -1));
+    });
+    R.querySelectorAll("[data-covers-plus]").forEach((btn) => {
+      btn.addEventListener("click", () => this._changerCouverts(Number(btn.dataset.coversPlus), 1));
+    });
+
+    // Bouton "En stock" (retirer un ingrédient de la liste de courses)
+    R.querySelectorAll("[data-stock]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ing = btn.dataset.stock;
+        try {
+          await this._hass.callService("jow", "exclude_ingredient", { ingredient: ing });
+          this._toast(`✓ ${ing} retiré de la liste`);
+        } catch (err) {
+          this._toast("✕ Erreur", true);
+        }
+      });
+    });
+
+    // Drag & drop : déplacer un plat d'un jour à l'autre
+    R.querySelectorAll("[data-drag-jour]").forEach((el) => {
+      el.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", el.dataset.dragJour);
+        el.classList.add("dragging");
+      });
+      el.addEventListener("dragend", () => el.classList.remove("dragging"));
+    });
+    R.querySelectorAll("[data-drop-jour]").forEach((el) => {
+      el.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        el.classList.add("drag-over");
+      });
+      el.addEventListener("dragleave", () => el.classList.remove("drag-over"));
+      el.addEventListener("drop", async (e) => {
+        e.preventDefault();
+        el.classList.remove("drag-over");
+        const from = e.dataTransfer.getData("text/plain");
+        const to = el.dataset.dropJour;
+        if (from && to && from !== to) {
+          await this._deplacerPlat(Number(from), Number(to));
+        }
+      });
+    });
+
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule
     // sur la mise en page typographique.
     const img = R.querySelector("img[data-photo]");
@@ -1096,6 +1310,7 @@ const LIBELLES = {
   show_calories: "Afficher les calories",
   show_allergens: "Afficher les allergènes",
   show_week_calories: "Afficher le total calories de la semaine",
+  show_month: "Vue mensuelle (4 semaines compactes)",
   // ---- Thèmes & Frigo ----
   context_section: "Thèmes par jour & Inventaire du frigo",
   day_themes_lundi: "Thème lundi (ex : végétarien)",
@@ -1126,6 +1341,7 @@ const LIBELLES = {
   action_refresh_shopping: "Bouton « Régénérer la liste de courses »",
   action_send_jow: "Bouton « Envoyer à Jow » (ouvre les recettes)",
   action_copy_meal: "Bouton « Copier vers… » (restes du lendemain)",
+  action_favoris: "Bouton « Choisir parmi mes favoris »",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   entites_s1: "Entités S+1 (semaine prochaine — auto si vide)",
@@ -1237,6 +1453,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
       { name: "show_calories", selector: { boolean: {} } },
       { name: "show_allergens", selector: { boolean: {} } },
       { name: "show_week_calories", selector: { boolean: {} } },
+      { name: "show_month", selector: { boolean: {} } },
       // ---- Thèmes & Frigo ----
       { type: "expandable", name: "context_section", title: LIBELLES.context_section, schema: [
         { name: "day_themes_lundi", selector: { text: {} } },
@@ -1269,6 +1486,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_refresh_shopping", selector: { boolean: {} } },
         { name: "action_send_jow", selector: { boolean: {} } },
         { name: "action_copy_meal", selector: { boolean: {} } },
+        { name: "action_favoris", selector: { boolean: {} } },
       ]},
       // ---- Entités S0 ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
@@ -1308,6 +1526,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
       show_calories: this._config.show_calories !== false,
       show_allergens: this._config.show_allergens !== false,
       show_week_calories: this._config.show_week_calories === true,
+      show_month: this._config.show_month === true,
       context_section: {
         day_themes_lundi: this._config.day_themes?.lundi || "",
         day_themes_mardi: this._config.day_themes?.mardi || "",
@@ -1336,6 +1555,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_refresh_shopping: (this._config.actions || {}).refresh_shopping === true,
         action_send_jow: (this._config.actions || {}).send_jow === true,
         action_copy_meal: (this._config.actions || {}).copy_meal === true,
+        action_favoris: (this._config.actions || {}).favoris === true,
       },
       entites: ent,
       entites_s1: entS1,
@@ -1396,6 +1616,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           refresh_shopping: actionsData.action_refresh_shopping === true,
           send_jow: actionsData.action_send_jow === true,
           copy_meal: actionsData.action_copy_meal === true,
+          favoris: actionsData.action_favoris === true,
         };
 
         // Thèmes par jour + frigo

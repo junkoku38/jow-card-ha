@@ -1004,11 +1004,17 @@ class WeeklyMenuCard extends HTMLElement {
         const recipes = (resp && resp.response && resp.response.recipes) || [];
         if (!recipes.length) {
           this._toast("Aucun favori trouvé — token Jow requis", true);
+          this._occupe = false;
+          this._signature = null;
+          this._render();
           return;
         }
         // Afficher dans un dialogue in-card avec des boutons "Planifier"
         const R = this.shadowRoot;
-        if (!R) return;
+        if (!R) { this._occupe = false; return; }
+        this._occupe = false;
+        this._signature = null;
+        this._render();
         const jourLabel = JOURS[this._selection ?? this._aujourdhui()];
         const items = recipes.slice(0, 20).map((r, idx) => {
           const nom = r.name || r.title || "Recette";
@@ -1028,10 +1034,15 @@ class WeeklyMenuCard extends HTMLElement {
           <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
         </div>`;
         R.appendChild(overlay);
+        const fermerOverlay = () => {
+          overlay.remove();
+          this._signature = null;
+          this._render();
+        };
         overlay.addEventListener("click", async (e) => {
-          if (e.target === overlay) { overlay.remove(); return; }
+          if (e.target === overlay) { fermerOverlay(); return; }
           const closeBtn = e.target.closest('[data-rep="non"]');
-          if (closeBtn) { overlay.remove(); return; }
+          if (closeBtn) { fermerOverlay(); return; }
           const btn = e.target.closest("[data-plan-fav]");
           if (!btn) return;
           const idx = Number(btn.dataset.planFav);
@@ -1057,7 +1068,6 @@ class WeeklyMenuCard extends HTMLElement {
       } catch (err) {
         console.error("weekly-menu-card : échec favoris", err);
         this._toast("✕ Favoris indisponibles", true);
-      } finally {
         this._occupe = false;
         this._signature = null;
         this._render();

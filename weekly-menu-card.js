@@ -777,7 +777,7 @@ class WeeklyMenuCard extends HTMLElement {
         ${compo}
         ${barreSuggest}
         <div class="actions">
-          ${lien ? `<a class="bouton" href="${lien}" target="_blank" rel="noopener noreferrer">Voir la recette ↗</a>` : ""}
+          ${lien ? `<button class="bouton" data-recette="${j.index}">Voir la recette ↗</button>` : ""}
           ${boutonChanger}
           ${boutonsActions}
         </div>
@@ -1521,6 +1521,15 @@ class WeeklyMenuCard extends HTMLElement {
 
     R.querySelectorAll("[data-envoyer-jow]").forEach((el) => {
       el.addEventListener("click", () => this._envoyerJow());
+    });
+
+    R.querySelectorAll("[data-recette]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const i = Number(el.dataset.recette);
+        const jour = this._jour(i);
+        const url = this._url(jour.url);
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      });
     });
 
     // Barre de saisie "Proposer un plat" : Entrée ou clic sur Go

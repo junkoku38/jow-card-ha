@@ -354,6 +354,59 @@ const STYLES = `
   .info-popup .info-close:hover { opacity: 1; }
   .info-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9999; }
 
+  /* ---- Dialogue modal (remplace window.confirm / prompt) ---- */
+  .dialogue-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10001;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .dialogue {
+    background: var(--encre); color: var(--papier); border-radius: 12px;
+    padding: 24px; max-width: 340px; width: calc(100% - 32px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4); z-index: 10002;
+    font-size: 0.88rem; line-height: 1.5;
+  }
+  .dialogue-msg { margin: 0 0 18px; }
+  .dialogue-boutons { display: flex; gap: 10px; justify-content: flex-end; }
+  .dialogue-boutons button {
+    min-height: 44px; padding: 0 18px;
+    border: 1px solid var(--filet); border-radius: 8px;
+    background: none; color: var(--papier);
+    font: inherit; font-size: 0.85rem; cursor: pointer;
+  }
+  .dialogue-boutons button:hover { border-color: var(--gris); }
+  .dialogue-boutons button:focus-visible { outline: 2px solid var(--papier); outline-offset: 2px; }
+  .dialogue-boutons button.danger { border-color: #a33; color: #e88; }
+  .dialogue-boutons button.danger:hover { background: #a33; color: var(--papier); }
+  .dialogue-select {
+    width: 100%; margin-bottom: 18px; padding: 10px 12px;
+    border: 1px solid var(--filet); border-radius: 8px;
+    background: var(--encre-2); color: var(--papier);
+    font: inherit; font-size: 0.85rem; outline: none;
+  }
+  .dialogue-select:focus { border-color: var(--gris); }
+
+  /* ---- Menu tactile (remplace le drag & drop sur mobile) ---- */
+  .menu-tactile {
+    position: fixed; z-index: 10002;
+    background: var(--encre); border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 6px; min-width: 200px;
+    font-size: 0.82rem;
+  }
+  .menu-tactile .mt-titre {
+    padding: 8px 12px 6px; font-size: 0.62rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--gris);
+  }
+  .menu-tactile button {
+    display: block; width: 100%; text-align: left;
+    padding: 10px 12px; border: 0; border-radius: 6px;
+    background: none; color: var(--papier);
+    font: inherit; font-size: 0.82rem; cursor: pointer;
+  }
+  .menu-tactile button:hover { background: var(--encre-2); }
+  .menu-tactile button:disabled { opacity: 0.4; cursor: default; }
+  .menu-tactile button.danger { color: #e88; }
+
   @media (max-width: 420px) {
     .detail, .index, .legende { padding-left: 16px; padding-right: 16px; }
     .titre { font-size: 1.4rem; }
@@ -896,14 +949,18 @@ class WeeklyMenuCard extends HTMLElement {
     if (!def || this._occupe || !this._hass) return;
 
     // Confirmation si nécessaire
-    if (def.confirm && !window.confirm(def.confirm)) return;
+    if (def.confirm && !(await this._dialogue(def.confirm, { danger: true, ouiLabel: "Confirmer" }))) return;
 
     // Cas spécial : copy_meal demande un jour cible
     if (key === "copy_meal") {
-      const choix = window.prompt("Copier vers quel jour ?\n(lundi, mardi, …, dimanche)", JOURS[(jourIndex + 1) % 7]);
+      const defaut = JOURS[(jourIndex + 1) % 7];
+      const choix = await this._dialogueChoix(
+        "Copier vers quel jour ?",
+        JOURS.map((j) => ({ value: j, label: j.charAt(0).toUpperCase() + j.slice(1) })),
+        defaut,
+      );
       if (!choix) return;
-      const jourCible = choix.trim().toLowerCase();
-      const idxCible = JOURS.indexOf(jourCible);
+      const idxCible = JOURS.indexOf(choix);
       if (idxCible < 0) { this._toast("✕ Jour non reconnu", true); return; }
       const data = {
         weekday: JOURS[jourIndex],
@@ -929,7 +986,7 @@ class WeeklyMenuCard extends HTMLElement {
       return;
     }
 
-    // Cas spécial : favoris affiche les recettes dans une fenêtre
+    // Cas spécial : favoris affiche les recettes dans un dialogue in-card
     if (key === "favoris") {
       this._occupe = true;
       this._signature = null;
@@ -949,53 +1006,54 @@ class WeeklyMenuCard extends HTMLElement {
           this._toast("Aucun favori trouvé — token Jow requis", true);
           return;
         }
-        // Afficher dans une fenêtre avec des boutons "Planifier"
-        const liens = recipes.slice(0, 20).map((r, idx) => {
-          const id = r.id || r._id;
+        // Afficher dans un dialogue in-card avec des boutons "Planifier"
+        const R = this.shadowRoot;
+        if (!R) return;
+        const jourLabel = JOURS[this._selection ?? this._aujourdhui()];
+        const items = recipes.slice(0, 20).map((r, idx) => {
           const nom = r.name || r.title || "Recette";
           const cal = r.calories ? ` — ${r.calories} kcal` : "";
           const img = r.imageUrl ? `<img src="https://static.jow.fr/${r.imageUrl}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" alt="">` : "";
-          return `<li style="display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #eee">
+          return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
             ${img}
-            <span style="flex:1"><b>${this._esc(nom)}</b><span style="color:#999;font-size:0.8rem">${cal}</span></span>
-            <button data-plan-fav="${idx}" data-fav-name="${this._esc(nom)}" style="padding:6px 12px;cursor:pointer;border:1px solid #ccc;border-radius:6px;background:#f5f5f5">Planifier</button>
+            <span style="flex:1"><b>${this._esc(nom)}</b><span style="color:var(--gris);font-size:0.8rem">${cal}</span></span>
+            <button class="bouton" data-plan-fav="${idx}" style="padding:6px 12px;cursor:pointer">Planifier</button>
           </li>`;
         }).join("");
-        const jourLabel = JOURS[this._selection ?? this._aujourdhui()];
-        const html = `<html><head><title>Favoris Jow</title><style>body{font-family:system-ui;padding:20px;max-width:600px;margin:auto}h2{margin-bottom:10px}.jour{color:#666;font-size:0.85rem;margin-bottom:15px}button:hover{background:#e0e0e0}</style></head><body><h2>★ Mes favoris Jow (${recipes.length})</h2><p class="jour">Cliquez « Planifier » pour ajouter au ${jourLabel}</p><ul style="list-style:none;padding:0">${liens}</ul></body></html>`;
-        const w = window.open("", "_blank");
-        if (w) {
-          w.document.open();
-          w.document.write(html);
-          w.document.close();
-          // Brancher les boutons Planifier
-          w.document.querySelectorAll("[data-plan-fav]").forEach((btn) => {
-            btn.addEventListener("click", async () => {
-              const idx = Number(btn.dataset.planFav);
-              const rec = recipes[idx];
-              const recipeId = rec.id || rec._id;
-              const nom = rec.name || rec.title;
-              btn.disabled = true;
-              btn.textContent = "…";
-              try {
-                // Appeler jow.plan_meal avec le titre comme requête
-                await this._hass.callService("jow", "plan_meal", {
-                  query: nom,
-                  weekday: JOURS[this._selection ?? this._aujourdhui()],
-                  week_offset: this._weekOffset,
-                  choice: 1,
-                });
-                btn.textContent = "✓ Planifié";
-                btn.style.background = "#c8e6c9";
-              } catch (err) {
-                btn.textContent = "✕ Erreur";
-                btn.style.background = "#ffcdd2";
-              }
+        const overlay = document.createElement("div");
+        overlay.className = "dialogue-overlay";
+        overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
+          <p class="dialogue-msg">★ Mes favoris Jow (${recipes.length})<br><span style="color:var(--gris);font-size:0.8rem">Cliquez « Planifier » pour ajouter au ${this._esc(jourLabel)}</span></p>
+          <ul style="list-style:none;padding:0;margin:0">${items}</ul>
+          <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
+        </div>`;
+        R.appendChild(overlay);
+        overlay.addEventListener("click", async (e) => {
+          if (e.target === overlay) { overlay.remove(); return; }
+          const closeBtn = e.target.closest('[data-rep="non"]');
+          if (closeBtn) { overlay.remove(); return; }
+          const btn = e.target.closest("[data-plan-fav]");
+          if (!btn) return;
+          const idx = Number(btn.dataset.planFav);
+          const rec = recipes[idx];
+          const nom = rec.name || rec.title;
+          btn.disabled = true;
+          btn.textContent = "…";
+          try {
+            await this._hass.callService("jow", "plan_meal", {
+              query: nom,
+              weekday: JOURS[this._selection ?? this._aujourdhui()],
+              week_offset: this._weekOffset,
+              choice: 1,
             });
-          });
-        } else {
-          this._toast("Popup bloquée", true);
-        }
+            btn.textContent = "✓ Planifié";
+            btn.style.borderColor = "#4a9";
+          } catch (err) {
+            btn.textContent = "✕ Erreur";
+            btn.style.borderColor = "#a33";
+            btn.disabled = false;
+          }
+        });
       } catch (err) {
         console.error("weekly-menu-card : échec favoris", err);
         this._toast("✕ Favoris indisponibles", true);
@@ -1033,6 +1091,64 @@ class WeeklyMenuCard extends HTMLElement {
       this._render();
       setTimeout(() => { this._signature = null; this._render(); }, 3000);
     }
+  }
+
+  /** Dialogue modal de confirmation (remplace window.confirm, non
+   *  supporté dans le webview de l'app mobile HA).
+   *  Retourne une Promise<boolean>. */
+  _dialogue(message, opts = {}) {
+    return new Promise((resolve) => {
+      const R = this.shadowRoot;
+      if (!R) { resolve(false); return; }
+      const overlay = document.createElement("div");
+      overlay.className = "dialogue-overlay";
+      overlay.innerHTML = `<div class="dialogue" role="alertdialog" aria-modal="true">
+        <p class="dialogue-msg">${this._esc(message)}</p>
+        <div class="dialogue-boutons">
+          <button data-rep="non">${this._esc(opts.nonLabel || "Annuler")}</button>
+          <button class="${opts.danger ? "danger" : ""}" data-rep="oui">${this._esc(opts.ouiLabel || "OK")}</button>
+        </div>
+      </div>`;
+      R.appendChild(overlay);
+      const fermer = (val) => { overlay.remove(); resolve(val); };
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) fermer(false);
+        const btn = e.target.closest("[data-rep]");
+        if (btn) fermer(btn.dataset.rep === "oui");
+      });
+      overlay.querySelector('[data-rep="oui"]')?.focus();
+    });
+  }
+
+  /** Dialogue modal avec un menu déroulant (remplace window.prompt).
+   *  Retourne une Promise<string|null>. */
+  _dialogueChoix(message, options, defaut) {
+    return new Promise((resolve) => {
+      const R = this.shadowRoot;
+      if (!R) { resolve(null); return; }
+      const opts = options.map((o) =>
+        `<option value="${this._esc(o.value)}"${o.value === defaut ? " selected" : ""}>${this._esc(o.label)}</option>`
+      ).join("");
+      const overlay = document.createElement("div");
+      overlay.className = "dialogue-overlay";
+      overlay.innerHTML = `<div class="dialogue" role="alertdialog" aria-modal="true">
+        <p class="dialogue-msg">${this._esc(message)}</p>
+        <select class="dialogue-select">${opts}</select>
+        <div class="dialogue-boutons">
+          <button data-rep="non">Annuler</button>
+          <button data-rep="oui">OK</button>
+        </div>
+      </div>`;
+      R.appendChild(overlay);
+      const select = overlay.querySelector("select");
+      const fermer = (val) => { overlay.remove(); resolve(val); };
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) fermer(null);
+        const btn = e.target.closest("[data-rep]");
+        if (btn) fermer(btn.dataset.rep === "oui" ? select.value : null);
+      });
+      select?.focus();
+    });
   }
 
   /** Affiche un message éphémère en bas de la carte. */
@@ -1370,17 +1486,29 @@ class WeeklyMenuCard extends HTMLElement {
     // bloqué par le popup blocker).
     window.open(urls[0], "_blank", "noopener,noreferrer");
 
-    // Pour les suivants : ouvrir une fenêtre avec des liens cliquables
-    // (les popups différés sont bloqués par les navigateurs).
+    // Pour les suivants : afficher un dialogue in-card avec des boutons
+    // (les popups différés window.open sont bloqués sur mobile).
     if (urls.length > 1) {
-      const liens = urls.map((u, i) => `<li><a href="${u}" target="_blank" rel="noopener noreferrer">Recette ${i + 1}</a></li>`).join("");
-      const html = `<html><head><title>Recettes Jow</title><style>body{font-family:system-ui;padding:30px}li{margin:8px 0}a{color:#1a1816}</style></head><body><h2>Ouvrir les recettes sur Jow</h2><ul>${liens}</ul></body></html>`;
-      const w = window.open("", "_blank");
-      if (w) {
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-      }
+      const R = this.shadowRoot;
+      if (!R) return;
+      const overlay = document.createElement("div");
+      overlay.className = "dialogue-overlay";
+      const items = urls.map((u, i) =>
+        `<button class="bouton" data-url="${this._esc(u)}" style="width:100%;text-align:left;margin-bottom:8px">Recette ${i + 1} ↗</button>`
+      ).join("");
+      overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true">
+        <p class="dialogue-msg">Ouvrir les autres recettes sur Jow</p>
+        <div>${items}</div>
+        <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
+      </div>`;
+      R.appendChild(overlay);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) { overlay.remove(); return; }
+        const btn = e.target.closest("[data-rep]");
+        if (btn) { overlay.remove(); return; }
+        const urlBtn = e.target.closest("[data-url]");
+        if (urlBtn) { window.open(urlBtn.dataset.url, "_blank", "noopener,noreferrer"); }
+      });
     }
   }
 
@@ -1488,6 +1616,46 @@ class WeeklyMenuCard extends HTMLElement {
       setTimeout(() => { this._signature = null; this._render(); }, 3000);
       setTimeout(() => { this._signature = null; this._render(); }, 8000);
     }
+  }
+
+  /** Menu tactile contextuel (alternative au drag & drop sur mobile).
+   *  S'ouvre sur long-press d'une ligne planifiée. */
+  _menuTactile(from, event) {
+    const R = this.shadowRoot;
+    if (!R) return;
+    const jour = this._jour(from);
+    if (!jour?.planned) return;
+    // Fermer un menu existant
+    R.querySelector(".menu-tactile")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "menu-tactile";
+    const dests = JOURS.map((j, i) => ({ j, i }))
+      .filter(({ i }) => i !== from && this._jour(i).planned !== false);
+    menu.innerHTML = `<div class="mt-titre">Déplacer « ${this._esc(jour.nom)} » vers</div>
+      ${dests.map(({ j, i }) =>
+        `<button data-vers="${i}">${COURTS[i]} ${this._esc(j)}</button>`
+      ).join("")}
+      <button class="danger" data-vers="-1">Annuler</button>`;
+    R.appendChild(menu);
+    // Positionner
+    const rect = event instanceof TouchEvent
+      ? event.touches[0]?.getClientRects?.()[0] || event.target.getBoundingClientRect()
+      : event.target.getBoundingClientRect();
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - 220)}px`;
+    menu.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - menu.offsetHeight - 10)}px`;
+    // Brancher
+    menu.addEventListener("click", async (e) => {
+      const btn = e.target.closest("[data-vers]");
+      if (!btn) return;
+      const to = Number(btn.dataset.vers);
+      menu.remove();
+      if (to >= 0) await this._deplacerPlat(from, to);
+    });
+    // Fermer en cliquant ailleurs
+    const close = (ev) => {
+      if (!menu.contains(ev.target)) { menu.remove(); R.removeEventListener("click", close); }
+    };
+    setTimeout(() => R.addEventListener("click", close), 0);
   }
 
   _brancher() {
@@ -1611,6 +1779,32 @@ class WeeklyMenuCard extends HTMLElement {
           await this._deplacerPlat(Number(from), Number(to));
         }
       });
+    });
+
+    // Alternative tactile au drag & drop : long-press sur une ligne
+    // planifiée ouvre un menu de destination (sans attendre un drop).
+    R.querySelectorAll("[data-drag-jour]").forEach((el) => {
+      let timer = null;
+      let started = false;
+      const start = (e) => {
+        if (e.button != null && e.button !== 0) return;
+        started = false;
+        timer = setTimeout(() => {
+          started = true;
+          e.preventDefault();
+          this._menuTactile(Number(el.dataset.dragJour), e);
+        }, 500);
+      };
+      const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      el.addEventListener("touchstart", start, { passive: true });
+      el.addEventListener("touchend", cancel);
+      el.addEventListener("touchmove", cancel);
+      el.addEventListener("touchcancel", cancel);
+      el.addEventListener("mousedown", start);
+      el.addEventListener("mouseup", cancel);
+      el.addEventListener("mouseleave", cancel);
+      // Empêcher le menu contextuel natif sur mobile
+      el.addEventListener("contextmenu", (e) => { if (started) e.preventDefault(); });
     });
 
     // Une URL d'image morte ne doit pas laisser un aplat vide : on bascule

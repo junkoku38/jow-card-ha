@@ -1555,6 +1555,14 @@ class WeeklyMenuCard extends HTMLElement {
   async _remplacer(i) {
     const action = this._action();
     if (this._occupe || !this._hass || !action) return;
+    // Anti-double-tap : sur mobile, le webview peut déclencher deux
+    // évènements click (touch + synthétique). Le second relance la
+    // suggestion avant que l'IA n'ait exclu la recette courante, et
+    // repropose la même. On ignore tout clic dans les 3s suivant le
+    // précédent.
+    const maintenant = Date.now();
+    if (this._dernierRemplacement && maintenant - this._dernierRemplacement < 3000) return;
+    this._dernierRemplacement = maintenant;
     const jour = this._jour(i);
 
     // Les jetons {date} et {weekday} permettent de viser le bon jour sans

@@ -66,6 +66,9 @@ const DEFAUTS = {
   },
 };
 
+let _wsId = 1;
+const nextWsId = () => _wsId++;
+
 /* Définition des boutons d'action prédéfinis.
    Chaque bouton appelle un service jow sur le jour actuellement affiché. */
 const ACTIONS_PREDEFINIES = {
@@ -459,13 +462,14 @@ class WeeklyMenuCard extends HTMLElement {
   get hass() { return this._hass; }
 
   set hass(hass) {
+    const oldHass = this._hass;
     this._hass = hass;
     // Nettoyer _imagesKO : si une entité a changé (last_updated), on
     // retire son index du Set pour que la nouvelle image puisse s'afficher.
     for (let i = 0; i < this._entites.length; i++) {
       const s = hass.states[this._entites[i]];
       if (!s) continue;
-      const prev = this._hass?.states?.[this._entites[i]];
+      const prev = oldHass?.states?.[this._entites[i]];
       if (prev && prev.last_updated !== s.last_updated && this._imagesKO.has(i)) {
         this._imagesKO.delete(i);
       }
@@ -592,7 +596,7 @@ class WeeklyMenuCard extends HTMLElement {
   _esc(t) {
     const d = document.createElement("div");
     d.textContent = t == null ? "" : String(t);
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   /** Échapper le HTML ne suffit pas dans un href : « javascript: » passerait.
@@ -601,7 +605,7 @@ class WeeklyMenuCard extends HTMLElement {
     if (!brut) return null;
     const t = String(brut).trim();
     if (/^https?:\/\//i.test(t)) return this._esc(t);
-    if (imageAutorisee && /^data:image\//i.test(t)) return this._esc(t);
+    if (imageAutorisee && /^data:image\/(png|jpe?g|webp|gif)(;base64)?,/i.test(t)) return this._esc(t);
     return null;
   }
 
@@ -927,8 +931,6 @@ class WeeklyMenuCard extends HTMLElement {
         console.error(`weekly-menu-card : échec planification S+1 ${JOURS[i]}`, err);
         this._toast(`✕ Échec ${JOURS[i]} — erreur`, true);
       }
-      this._signature = null;
-      this._render();
     }
 
     this._occupe = false;
@@ -939,7 +941,7 @@ class WeeklyMenuCard extends HTMLElement {
     } else {
       this._toast(`S+1 : ${succes} réussis, ${echecs} échecs`, true);
     }
-    setTimeout(() => { this._signature = null; this._render(); }, 5000);
+    this._differe(() => { this._signature = null; this._render(); }, 5000);
   }
 
   /** Appelle une action prédéfinie (meal_done, clear_meal, refresh_shopping)
@@ -981,7 +983,7 @@ class WeeklyMenuCard extends HTMLElement {
         this._occupe = false;
         this._signature = null;
         this._render();
-        setTimeout(() => { this._signature = null; this._render(); }, 3000);
+        this._differe(() => { this._signature = null; this._render(); }, 3000);
       }
       return;
     }
@@ -994,7 +996,7 @@ class WeeklyMenuCard extends HTMLElement {
       try {
         // callWS avec return_response au niveau top-level (pas dans service_data)
         const resp = await this._hass.callWS({
-          id: Math.floor(Math.random() * 100000),
+          id: nextWsId(),
           type: "call_service",
           domain: "jow",
           service: "sync_favorites",
@@ -1019,7 +1021,8 @@ class WeeklyMenuCard extends HTMLElement {
         const items = recipes.slice(0, 20).map((r, idx) => {
           const nom = r.name || r.title || "Recette";
           const cal = r.calories ? ` — ${r.calories} kcal` : "";
-          const img = r.imageUrl ? `<img src="https://static.jow.fr/${r.imageUrl}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" alt="">` : "";
+          const imgRaw = r.imageUrl ? `https://static.jow.fr/${r.imageUrl}` : null;
+          const img = imgRaw ? `<img src="${this._url(imgRaw, true) || ""}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" alt="">` : "";
           return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
             ${img}
             <span style="flex:1"><b>${this._esc(nom)}</b><span style="color:var(--gris);font-size:0.8rem">${cal}</span></span>
@@ -1099,7 +1102,7 @@ class WeeklyMenuCard extends HTMLElement {
       this._occupe = false;
       this._signature = null;
       this._render();
-      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
     }
   }
 
@@ -1161,6 +1164,22 @@ class WeeklyMenuCard extends HTMLElement {
     });
   }
 
+  /** Diffère un re-render en stockant le timer pour nettoyage. */
+  _differe(fn, delai) {
+    if (!this._timers) this._timers = [];
+    const id = setTimeout(() => {
+      this._timers = this._timers.filter((t) => t !== id);
+      fn();
+    }, delai);
+    this._timers.push(id);
+  }
+
+  disconnectedCallback() {
+    if (this._timers) this._timers.forEach((t) => clearTimeout(t));
+    this._timers = null;
+    if (this._toastTimer) clearTimeout(this._toastTimer);
+  }
+
   /** Affiche un message éphémère en bas de la carte. */
   _toast(msg, isError = false) {
     const R = this.shadowRoot;
@@ -1204,7 +1223,7 @@ class WeeklyMenuCard extends HTMLElement {
       this._occupe = false;
       this._signature = null;
       this._render();
-      setTimeout(() => { this._signature = null; this._render(); }, 3000);
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
     }
   }
 
@@ -1230,23 +1249,13 @@ class WeeklyMenuCard extends HTMLElement {
       this._toast("✕ Couverts non modifiés — erreur", true);
     } finally {
       this._occupe = false;
-      // HA n'envoie pas d'update au frontend quand seuls les attributs
-      // changent. On récupère l'entité spécifique via WS et on l'injecte
-      // dans this._hass.states avant le re-render.
-      const entityId = this._entites[i];
-      try {
-        const resp = await this._hass.callWS({ id: Date.now(), type: "get_states" });
-        if (resp && Array.isArray(resp)) {
-          const fresh = resp.find((e) => e.entity_id === entityId);
-          if (fresh) {
-            // Cloner l'objet hass.states pour pouvoir le modifier
-            const newStates = { ...this._hass.states, [entityId]: fresh };
-            this._hass = { ...this._hass, states: newStates };
-          }
-        }
-      } catch (e) { /* ignore */ }
+      // HA n'envoie pas toujours d'update au frontend quand seuls les
+      // attributs changent. On force des re-renders différés qui liront
+      // this._hass.states (mis à jour par HA via le bus d'événements).
       this._signature = null;
       this._render();
+      this._differe(() => { this._signature = null; this._render(); }, 500);
+      this._differe(() => { this._signature = null; this._render(); }, 2000);
     }
   }
 
@@ -1260,7 +1269,7 @@ class WeeklyMenuCard extends HTMLElement {
     let jowContext = null;
     try {
       const resp = await this._hass.callWS({
-        id: Date.now(),
+        id: nextWsId(),
         type: "call_service",
         domain: "jow",
         service: "get_context",
@@ -1292,7 +1301,7 @@ class WeeklyMenuCard extends HTMLElement {
       ? recentsJow.map((r) => {
           const excl = r.excluded !== false;
           return `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${r.date})</span> ${
-            excl ? `<button data-clear-recent="${r.date}" style="margin-left:8px;padding:2px 8px;font-size:0.7rem;cursor:pointer;border:1px solid #666;border-radius:4px;background:none;color:inherit">Retirer</button>` : '<span style="color:#4a9;font-size:0.7rem">✓ retiré</span>'
+            excl ? `<button data-clear-recent="${this._esc(r.date)}" style="margin-left:8px;padding:2px 8px;font-size:0.7rem;cursor:pointer;border:1px solid #666;border-radius:4px;background:none;color:inherit">Retirer</button>` : '<span style="color:#4a9;font-size:0.7rem">✓ retiré</span>'
           }</li>`;
         }).join("")
       : "<li>Aucun</li>";
@@ -1594,8 +1603,8 @@ class WeeklyMenuCard extends HTMLElement {
       // Le service jow.suggest met du temps (IA + recherche). L'état de
       // l'entité peut arriver après le finally : on force un re-render
       // après 3s et 8s pour récupérer la nouvelle recette.
-      setTimeout(() => { this._signature = null; this._render(); }, 3000);
-      setTimeout(() => { this._signature = null; this._render(); }, 8000);
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
+      this._differe(() => { this._signature = null; this._render(); }, 8000);
     }
   }
 
@@ -1631,8 +1640,8 @@ class WeeklyMenuCard extends HTMLElement {
       this._occupe = false;
       this._signature = null;
       this._render();
-      setTimeout(() => { this._signature = null; this._render(); }, 3000);
-      setTimeout(() => { this._signature = null; this._render(); }, 8000);
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
+      this._differe(() => { this._signature = null; this._render(); }, 8000);
     }
   }
 
@@ -1671,6 +1680,7 @@ class WeeklyMenuCard extends HTMLElement {
     });
     // Fermer en cliquant ailleurs
     const close = (ev) => {
+      if (!menu.isConnected) { R.removeEventListener("click", close); return; }
       if (!menu.contains(ev.target)) { menu.remove(); R.removeEventListener("click", close); }
     };
     setTimeout(() => R.addEventListener("click", close), 0);
@@ -1814,7 +1824,7 @@ class WeeklyMenuCard extends HTMLElement {
         }, 500);
       };
       const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-      el.addEventListener("touchstart", start, { passive: true });
+      el.addEventListener("touchstart", start, { passive: false });
       el.addEventListener("touchend", cancel);
       el.addEventListener("touchmove", cancel);
       el.addEventListener("touchcancel", cancel);
@@ -2282,7 +2292,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
   _esc(t) {
     const d = document.createElement("div");
     d.textContent = t == null ? "" : String(t);
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 }
 

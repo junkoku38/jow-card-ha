@@ -17,7 +17,8 @@ Carte Lovelace **Home Assistant** pour afficher le menu de la semaine à partir 
 
 ```yaml
 type: custom:weekly-menu-card
-entities:
+title: Menu de la semaine     # en-tête facultatif
+entities:                      # 7 entités, de lundi à dimanche
   - sensor.jow_lundi
   - sensor.jow_mardi
   - sensor.jow_mercredi
@@ -28,8 +29,10 @@ entities:
 days: 7            # 7 = semaine entière, 1 = un seul plat avec flèches
 show_calories: true
 show_allergens: true
+show_week_calories: false   # total kcal de la semaine en pied de carte
+show_month: false           # vue mensuelle compacte (semaines existantes)
 replace_action:
-  service: jow.plan_meal
+  service: jow.suggest
   data:
     query: poulet léger
     date: "{date}"
@@ -37,3 +40,38 @@ replace_action:
 ```
 
 La carte reste compatible avec n'importe quelle intégration : la correspondance d'attributs est configurable via `attributes`.
+
+## Toutes les options
+
+| Option | Type | Défaut | Description |
+|---|---|---|---|
+| `title` | string | — | Titre affiché en en-tête de carte |
+| `entities` | list (7) | `sensor.jow_*` | Entités des 7 jours, de lundi à dimanche |
+| `entities_s1` | map | auto `_s1` | Entités de la semaine prochaine (suffixe `_s1` si absent) |
+| `days` | `7` \| `1` | `7` | Semaine entière (détail + index) ou un seul plat avec flèches |
+| `show_calories` | bool | `true` | Calories par portion (et total) dans le détail |
+| `show_allergens` | bool | `true` | Allergènes (codes INCO 1-14) dans le détail, l'index et le pied |
+| `show_week_calories` | bool | `false` | Total et moyenne kcal/semaine en pied de carte |
+| `show_month` | bool | `false` | Vue mensuelle : les semaines dont les entités existent (S, S+1, et S-1/S+2 si présentes) |
+| `replace_action` | map | — | Action de remplacement : `{ service: "domaine.svc", data: {...} }` avec jetons `{date}`, `{weekday}`, `{index}` |
+| `replace_ai_prompt` | string | — | Prompt IA personnalisé (envoyé comme `ai_prompt`) |
+| `day_themes` | map | `{}` | Thème par jour injecté dans le criteria (ex : `{ "lundi": "végétarien" }`) |
+| `fridge_ingredients` | string | — | Ingrédients disponibles (ex : `"poulet, courgettes"`) injectés dans le criteria |
+| `plan_next_enabled` | bool | `true` | Bouton « Planifier la semaine prochaine » (7 appels à `replace_action` avec `week_offset: 1`) |
+| `actions.meal_done` | bool | `true` | Bouton « Marquer comme fait » (`jow.meal_done`) |
+| `actions.clear_meal` | bool | `true` | Bouton « Effacer ce jour » (`jow.clear_meal`) |
+| `actions.refresh_shopping` | bool | `false` | Bouton « Régénérer la liste de courses » (`jow.refresh_shopping_list`) |
+| `actions.send_jow` | bool | `false` | Bouton « Envoyer à Jow » (ouvre les recettes sur jow.fr) |
+| `actions.copy_meal` | bool | `false` | Bouton « Copier vers… » (`jow.copy_meal`) |
+| `actions.favoris` | bool | `false` | Bouton « Choisir parmi mes favoris » (`jow.sync_favorites` + dialog) |
+| `attributes` | map | ha-jow | Correspondance attributs pour intégrations tierces (Mealie, Tandoor…) : `name`, `planned`, `image`, `url`, `date`, `calories`, `allergens`, `covers`, `duration`, `cooking_time`, `ingredients` |
+
+## Interactions
+
+- **Clic sur un jour** de l'index : l'affiche en détail (photo, composition, allergènes).
+- **Drag & drop** d'une ligne planifiée (desktop) ou **appui long** (mobile) : déplace le plat (`copy_meal` + `clear_meal`).
+- **Barre « Proposer un plat »** : recherche libre par jour, enrichie du thème du jour et du frigo.
+- **± couverts** : ajuste les portions via `jow.set_covers`.
+- **✕ sur un ingrédient** : le retire de la liste de courses (`jow.exclude_ingredient`).
+- **ℹ** : popup du contexte IA — allergies, préférences, interdits/à éviter (modifiables), plats récents, thèmes, météo, agent IA.
+- **Vue mensuelle** : clic sur un plat pour basculer sur sa semaine et l'afficher en détail.

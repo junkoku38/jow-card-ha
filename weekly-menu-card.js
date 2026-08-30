@@ -133,6 +133,7 @@ const STYLES = `
   }
 
   .carte {
+    position: relative; /* ancre le toast absolute */
     background: var(--encre);
     color: var(--papier);
     border-radius: 14px;
@@ -141,8 +142,14 @@ const STYLES = `
   }
   /* Les marges par défaut du navigateur sur p/h1 s'additionnent aux nôtres
      et doublent les espacements. On repart de zéro. */
-  .carte p, .carte h1 { margin: 0; }
+  .carte p, .carte h1, .carte h2 { margin: 0; }
   .mono { font-family: ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace; }
+  .titre-carte {
+    padding: 16px 22px 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
 
   /* ---- Vue détail ---- */
   .photo {
@@ -263,14 +270,19 @@ const STYLES = `
   .mois-semaine { background: var(--encre); padding: 6px 4px; }
   .mois-semaine .titre-s { font-size: 0.65rem; color: var(--gris); margin-bottom: 4px; text-transform: uppercase; }
   .mois-jour { display: flex; align-items: center; gap: 4px; padding: 3px 0; font-size: 0.72rem; cursor: pointer; }
+  button.mois-jour { width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; }
+  button.mois-jour:hover .plat { color: #FFF; }
+  button.mois-jour:focus-visible { outline: 2px solid var(--papier); outline-offset: -2px; border-radius: 4px; }
   .mois-jour:hover { opacity: 0.7; }
   .mois-jour .court { color: var(--gris); width: 12px; font-size: 0.62rem; }
   .mois-jour .plat { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mois-jour .plat.vide { color: var(--gris); font-style: italic; }
   .toast {
-    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--encre); color: var(--papier); padding: 10px 20px;
+    border: 1px solid var(--filet);
     border-radius: 8px; font-size: 0.85rem; z-index: 9999;
+    max-width: calc(100% - 44px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     box-shadow: 0 4px 16px rgba(0,0,0,0.3); opacity: 0;
     transition: opacity 0.3s; pointer-events: none;
   }
@@ -487,8 +499,18 @@ class WeeklyMenuCard extends HTMLElement {
         return `${s.state}:${s.last_updated}:${covers}:${ingQty}`;
       })
       .join("|") + `|${this._weekOffset}|${this._selection}|${this._occupe}|${[...this._imagesKO].join(",")}`;
-    if (sig === this._signature) return;
-    this._signature = sig;
+    /* Vue mensuelle : suivre aussi les semaines dérivées (S-1, S+2),
+       sinon un changement sur ces entités ne redessine pas la grille. */
+    let sigMois = "";
+    if (this._config?.show_month) {
+      for (const off of [-1, 0, 1, 2]) {
+        const ids = this._entitesPourOffset(off);
+        if (!ids) continue;
+        sigMois += "|" + ids.map((id) => hass.states[id]?.state ?? "absent").join(";");
+      }
+    }
+    if (sig + sigMois === this._signature) return;
+    this._signature = sig + sigMois;
     this._render();
   }
 
@@ -614,40 +636,62 @@ class WeeklyMenuCard extends HTMLElement {
     return new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
   }
 
-  /** Vue mensuelle compacte : 4 semaines (S-1, S, S+1, S+2) en grille. */
+  /** Entités dérivées pour un offset de semaine donné, ou null si
+   *  l'intégration ne fournit pas ces entités (S-1, S+2…). */
+  _entitesPourOffset(offset) {
+    if (offset === 0) return this._entitesBase;
+    if (offset === 1) return this._entites; // respecte entities_s1 configuré
+    // Autres semaines : suffixe _s{offset} — colonne affichée seulement
+    // si au moins une de ces entités existe dans HA.
+    const derivees = this._entitesBase.map((id) =>
+      id.endsWith(`_s${offset}`) ? id : `${id}_s${offset}`
+    );
+    const existe = derivees.some((id) => this._hass?.states[id]);
+    return existe ? derivees : null;
+  }
+
+  /** Le plat d'un jour est-il planifié ? Même logique que _jour :
+   *  attribut configuré sinon déduction depuis l'état, normalisé. */
+  _estPlanifie(etat) {
+    if (!etat) return false;
+    const a = etat.attributes || {};
+    const drapeau = this._champ(a, "planned");
+    if (typeof drapeau === "boolean") return drapeau;
+    const nom = this._champs.name ? a[this._champs.name] : etat.state;
+    return !!nom && !ETATS_VIDES.includes(String(nom).trim().toLowerCase());
+  }
+
+  /** Vue mensuelle compacte : les semaines qui existent réellement
+   *  (S et S+1 toujours ; S-1, S+2 si leurs entités existent). */
   _vueMensuelle() {
-    const semaines = [-1, 0, 1, 2];
-    const cellules = semaines.map((offset) => {
-      const jours = JOURS.map((_, i) => {
-        const id = this._weekOffset === 0
-          ? this._entitesBase.map((e) => offset === 0 ? e : e + `_s${offset}`)[i]
-          : this._entitesBase.map((e) => e + `_s${offset}`)[i];
-        const s = this._hass.states[id];
-        if (!s) return { index: i, planned: false, nom: "", offset };
-        const a = s.attributes || {};
-        const planned = this._champ(a, "planned") ?? (s.state && s.state !== "Rien de prévu" && s.state !== "unavailable");
-        return {
-          index: i,
-          planned: !!planned,
-          nom: planned ? (this._champ(a, "name") || s.state) : "",
-          offset,
-        };
-      });
-      const label = offset === 0 ? "Cette semaine" : offset === -1 ? "Sem. dernière" : `S+${offset}`;
-      const lignes = jours.map((j) => {
-        if (j.planned) {
-          return `<div class="mois-jour" data-mois-jour="${j.index}" data-mois-offset="${offset}">
+    const labels = { "-1": "Sem. dernière", 0: "Cette semaine", 1: "S+1", 2: "S+2" };
+    const cellules = [-1, 0, 1, 2]
+      .map((offset) => {
+        const ids = this._entitesPourOffset(offset);
+        if (!ids) return ""; // colonne fantôme : entités inexistantes
+        const jours = ids.map((id, i) => {
+          const s = this._hass.states[id];
+          const planned = this._estPlanifie(s);
+          const nom = planned
+            ? String(this._champs.name ? s.attributes?.[this._champs.name] : s.state)
+            : "";
+          return { index: i, planned, nom, offset, existe: !!s };
+        });
+        const lignes = jours.map((j) => {
+          if (j.planned) {
+            return `<button class="mois-jour" data-mois-jour="${j.index}" data-mois-offset="${offset}">
+              <span class="court mono">${COURTS[j.index]}</span>
+              <span class="plat">${this._esc(j.nom)}</span>
+            </button>`;
+          }
+          return `<div class="mois-jour">
             <span class="court mono">${COURTS[j.index]}</span>
-            <span class="plat">${this._esc(j.nom)}</span>
+            <span class="plat vide">—</span>
           </div>`;
-        }
-        return `<div class="mois-jour">
-          <span class="court mono">${COURTS[j.index]}</span>
-          <span class="plat vide">—</span>
-        </div>`;
-      }).join("");
-      return `<div class="mois-semaine"><div class="titre-s">${label}</div>${lignes}</div>`;
-    }).join("");
+        }).join("");
+        return `<div class="mois-semaine"><div class="titre-s">${labels[offset] ?? `S${offset > 0 ? "+" : ""}${offset}`}</div>${lignes}</div>`;
+      })
+      .join("");
     return `<div class="carte"><div class="semaine-bascule">
       <span>Vue mensuelle</span>
       <button data-semaine="0">Quitter</button>
@@ -678,6 +722,7 @@ class WeeklyMenuCard extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
       <div class="carte">
+        ${this._config.title ? `<h2 class="titre-carte">${this._esc(this._config.title)}</h2>` : ""}
         <div class="semaine-bascule">
           <span>${this._weekOffset === 0 ? "Cette semaine" : "Semaine prochaine"}</span>
           <span>
@@ -1164,11 +1209,14 @@ class WeeklyMenuCard extends HTMLElement {
     });
   }
 
-  /** Diffère un re-render en stockant le timer pour nettoyage. */
+  /** Diffère un re-render en stockant le timer pour nettoyage. Les
+   *  timers survivant à une déconnexion sont ignorés sans effet. */
   _differe(fn, delai) {
     if (!this._timers) this._timers = [];
     const id = setTimeout(() => {
-      this._timers = this._timers.filter((t) => t !== id);
+      this._timers = this._timers?.filter((t) => t !== id);
+      /* carte retirée du dashboard : ne rien faire (shadow root vide) */
+      if (!this.isConnected) return;
       fn();
     }, delai);
     this._timers.push(id);
@@ -1565,13 +1613,17 @@ class WeeklyMenuCard extends HTMLElement {
     const action = this._action();
     if (this._occupe || !this._hass || !action) return;
     // Anti-double-tap : sur mobile, le webview peut déclencher deux
-    // évènements click (touch + synthétique). Le second relance la
-    // suggestion avant que l'IA n'ait exclu la recette courante, et
-    // repropose la même. On ignore tout clic dans les 3s suivant le
-    // précédent.
+    // évènements click (touch + synthétique) sur le MÊME bouton. On
+    // ignore un second clic sur le même jour dans les 3 s ; un clic
+    // sur un autre jour n'est pas pénalisé.
     const maintenant = Date.now();
-    if (this._dernierRemplacement && maintenant - this._dernierRemplacement < 3000) return;
-    this._dernierRemplacement = maintenant;
+    if (
+      this._dernierRemplacement != null &&
+      this._dernierRemplacement.jour === i &&
+      this._dernierRemplacement.week === this._weekOffset &&
+      maintenant - this._dernierRemplacement.t < 3000
+    ) return;
+    this._dernierRemplacement = { jour: i, week: this._weekOffset, t: maintenant };
     const jour = this._jour(i);
 
     // Les jetons {date} et {weekday} permettent de viser le bon jour sans
@@ -1691,6 +1743,25 @@ class WeeklyMenuCard extends HTMLElement {
 
     R.querySelectorAll(".ligne[data-jour]").forEach((el) => {
       el.addEventListener("click", () => this._afficher(Number(el.dataset.jour)));
+    });
+
+    /* Vue mensuelle : un clic sur un plat bascule la carte sur cette
+       semaine et affiche ce jour en détail. */
+    R.querySelectorAll("[data-mois-jour]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const offset = Number(el.dataset.moisOffset);
+        const jour = Number(el.dataset.moisJour);
+        if (offset === 0 || offset === 1) {
+          if (offset !== this._weekOffset) {
+            this._weekOffset = offset;
+            this._imagesKO.clear();
+          }
+          this._selection = jour;
+          this._config = { ...this._config, show_month: false };
+          this._signature = null;
+          this._render();
+        }
+      });
     });
 
     R.querySelectorAll(".nav button").forEach((el) => {

@@ -78,7 +78,12 @@ let _wsId = 1;
 const nextWsId = () => _wsId++;
 
 /* Définition des boutons d'action prédéfinis.
-   Chaque bouton appelle un service jow sur le jour actuellement affiché. */
+   Chaque bouton appelle un service sur le jour actuellement affiché.
+   Toutes les actions sont surchargeables via la config de la carte :
+   actions:
+     meal_done: true
+     meal_done_service: script.manger  # (optionnel, remplace jow.meal_done)
+   Un service personnalisé reçoit {weekday} interpolé dans data. */
 const ACTIONS_PREDEFINIES = {
   meal_done: {
     label: "Marquer comme fait",
@@ -123,6 +128,22 @@ const ACTIONS_PREDEFINIES = {
     confirm: null,
   },
 };
+
+/** Résout le service d'une action prédéfinie : surcharge config si
+ *  présente (actions.<clé>_service), défaut jow sinon. Retourne
+ *  null pour les actions sans service (ex: send_jow, gérées à part). */
+function _serviceAction(config, cle) {
+  const def = ACTIONS_PREDEFINIES[cle];
+  if (!def) return null;
+  const surcharge = (config?.actions || {})[`${cle}_service`];
+  if (typeof surcharge === "string" && surcharge.trim()) {
+    const [domaine, service] = surcharge.trim().split(".");
+    return { domaine, service, data: def.data, confirm: def.confirm };
+  }
+  if (!def.service) return null;
+  const [domaine, service] = def.service.split(".");
+  return { domaine, service, data: def.data, confirm: def.confirm };
+}
 
 /* États qui signifient « pas de plat », quel que soit l'intégration. */
 const ETATS_VIDES = ["unknown", "unavailable", "none", "", "rien de prévu", "rien de prevu"];
@@ -529,6 +550,14 @@ class WeeklyMenuCard extends HTMLElement {
     const prevus = JOURS.filter((_, i) => this._jour(i).planned).length;
     return prevus ? 6 + Math.min(prevus, 6) : 3;
   }
+
+  /* Dashboards modernes (sections) : la carte remplira sa colonne. */
+  getGridOptions() {
+    const rows = this._hass
+      ? Math.max(3, Math.ceil((JOURS.filter((_, i) => this._jour(i).planned).length || 1) / 2) + 3)
+      : 6;
+    return { columns: 12, min_rows: 3, max_rows: rows };
+  }
   static getStubConfig() { return { type: "custom:weekly-menu-card" }; }
 
   // ----------------------------------------------------------------
@@ -734,9 +763,9 @@ class WeeklyMenuCard extends HTMLElement {
         <div class="semaine-bascule">
           <span>${this._weekOffset === 0 ? "Cette semaine" : "Semaine prochaine"}</span>
           <span>
-            <button data-semaine="0" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
-            <button data-semaine="1" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
-            <button class="info-btn" data-info="1" title="Contexte IA">ℹ</button>
+            <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
+            <button data-semaine="1" aria-label="Semaine prochaine" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
+            <button class="info-btn" data-info="1" title="Contexte IA" aria-label="Contexte IA (allergies, préférences, interdits)">ℹ</button>
           </span>
         </div>
         ${(this._config.actions || {}).refresh_shopping ? `
@@ -867,7 +896,10 @@ class WeeklyMenuCard extends HTMLElement {
             <span>${def.icon}</span> ${this._esc(def.label)}
           </button>`;
         }
-        const confirmAttr = def.confirm ? ` data-confirm="${this._esc(def.confirm)}"` : "";
+        // Confirmation de l'action résolue (surcharge comprise)
+        const act = _serviceAction(this._config, key);
+        const confirmText = act?.confirm ?? def.confirm;
+        const confirmAttr = confirmText ? ` data-confirm="${this._esc(confirmText)}"` : "";
         return `<button class="bouton action" data-action-predefinie="${key}" data-jour-action="${j.index}"${this._occupe ? " disabled" : ""}${confirmAttr}>
           <span>${def.icon}</span> ${this._esc(def.label)}
         </button>`;
@@ -909,7 +941,7 @@ class WeeklyMenuCard extends HTMLElement {
         // Sans recherche configurée, le « + » n'aurait rien à faire :
         // la ligne reste inerte plutôt que de simuler une action.
         return this._action()
-          ? `<button class="ligne" data-remplacer="${j.index}" data-drop-jour="${j.index}"${this._occupe ? " disabled" : ""}>
+          ? `<button class="ligne" data-remplacer="${j.index}" data-drop-jour="${j.index}" aria-label="Proposer un plat pour le ${JOURS[j.index]}"${this._occupe ? " disabled" : ""}>
                <span class="jour mono">${COURTS[j.index]}</span>
                <span class="nom vide">${this._occupe ? "En cours\u2026" : "Rien de prévu \u2014 en proposer un"}</span>
                <span class="fleche">+</span></button>`
@@ -922,7 +954,7 @@ class WeeklyMenuCard extends HTMLElement {
         ? `<span class="codes mono">allergènes ${this._esc(j.allergenes.map((c) => c.code ? `${c.code} ${c.label}` : c.label).join(" · "))}</span>` : "";
       const kcal = this._config.show_calories && j.calories != null
         ? `<span class="kcal-index mono">${j.calories}<i> kcal/portion</i></span>` : "";
-      return `<button class="ligne" data-jour="${j.index}" data-drag-jour="${j.index}" data-drop-jour="${j.index}" draggable="true">
+      return `<button class="ligne" data-jour="${j.index}" data-drag-jour="${j.index}" data-drop-jour="${j.index}" draggable="true" aria-label="${this._esc(JOURS[j.index])} : ${this._esc(j.nom)}">
         <span class="jour mono">${COURTS[j.index]}</span>
         <span class="nom">${this._esc(j.nom)}${codes}</span>
         ${kcal}
@@ -1002,9 +1034,10 @@ class WeeklyMenuCard extends HTMLElement {
   async _actionPredefinie(key, jourIndex) {
     const def = ACTIONS_PREDEFINIES[key];
     if (!def || this._occupe || !this._hass) return;
-
-    // Confirmation si nécessaire
-    if (def.confirm && !(await this._dialogue(def.confirm, { danger: true, ouiLabel: "Confirmer" }))) return;
+    // Confirmation (celle de l'action résolue, surcharge comprise)
+    const act = _serviceAction(this._config, key);
+    const confirmText = act?.confirm ?? def.confirm;
+    if (confirmText && !(await this._dialogue(confirmText, { danger: true, ouiLabel: "Confirmer" }))) return;
 
     // Cas spécial : copy_meal demande un jour cible
     if (key === "copy_meal") {
@@ -1131,15 +1164,17 @@ class WeeklyMenuCard extends HTMLElement {
       return;
     }
 
-    const [domaine, service] = def.service.split(".", 2);
-    if (!domaine || !service) return;
+    // Service générique : surchargeable via actions.<clé>_service
+    const actGen = _serviceAction(this._config, key);
+    if (!actGen) return;
+    const { domaine, service, data: dataTemplate } = actGen;
 
     // Remplir les jetons {weekday}, {index}
     const remplir = (v) => (typeof v === "string"
       ? v.replace("{weekday}", JOURS[jourIndex]).replace("{index}", String(jourIndex))
       : v);
     const data = Object.fromEntries(
-      Object.entries(def.data).map(([k, v]) => [k, remplir(v)])
+      Object.entries(dataTemplate || {}).map(([k, v]) => [k, remplir(v)])
     );
 
     this._occupe = true;
@@ -1149,7 +1184,7 @@ class WeeklyMenuCard extends HTMLElement {
       await this._hass.callService(domaine, service, data);
       this._toast(`✓ ${def.label}`);
     } catch (err) {
-      console.error(`weekly-menu-card : échec de ${def.service}`, err);
+      console.error(`weekly-menu-card : échec de ${domaine}.${service}`, err);
       this._toast(`✕ ${def.label} — erreur`, true);
     } finally {
       this._occupe = false;
@@ -1244,6 +1279,8 @@ class WeeklyMenuCard extends HTMLElement {
     if (!el) {
       el = document.createElement("div");
       el.className = "toast";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
       R.appendChild(el);
     }
     el.textContent = msg;
@@ -2113,7 +2150,9 @@ class WeeklyMenuCardEditor extends HTMLElement {
       // ---- Boutons d'action prédéfinis ----
       { type: "expandable", name: "actions_section", title: LIBELLES.actions_section, schema: [
         { name: "action_meal_done", selector: { boolean: {} } },
+        { name: "meal_done_service", selector: { text: {} }, default: "" },
         { name: "action_clear_meal", selector: { boolean: {} } },
+        { name: "clear_meal_service", selector: { text: {} }, default: "" },
         { name: "action_refresh_shopping", selector: { boolean: {} } },
         { name: "action_send_jow", selector: { boolean: {} } },
         { name: "action_copy_meal", selector: { boolean: {} } },
@@ -2188,6 +2227,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_send_jow: (this._config.actions || {}).send_jow === true,
         action_copy_meal: (this._config.actions || {}).copy_meal === true,
         action_favoris: (this._config.actions || {}).favoris === true,
+        meal_done_service: (this._config.actions || {}).meal_done_service || "",
+        clear_meal_service: (this._config.actions || {}).clear_meal_service || "",
       },
       entites: ent,
       entites_s1: entS1,
@@ -2250,6 +2291,11 @@ class WeeklyMenuCardEditor extends HTMLElement {
           copy_meal: actionsData.action_copy_meal === true,
           favoris: actionsData.action_favoris === true,
         };
+        // Services personnalisés (surcharge de jow.* par défaut)
+        for (const champ of ["meal_done_service", "clear_meal_service"]) {
+          const val = actionsData[champ];
+          if (typeof val === "string" && val.trim()) actions[champ] = val.trim();
+        }
 
         // Thèmes par jour + frigo
         const day_themes = {};

@@ -60,6 +60,8 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `plan_next_enabled` | bool | `true` | Bouton « Planifier la semaine prochaine » (7 appels à `replace_action` avec `week_offset: 1`) |
 | `actions.meal_done` | bool | `true` | Bouton « Marquer comme fait » (`jow.meal_done`) |
 | `actions.clear_meal` | bool | `true` | Bouton « Effacer ce jour » (`jow.clear_meal`) |
+| `actions.meal_done_service` | string | `jow.meal_done` | Surcharge du service appelé par « Marquer comme fait » (ex. `script.manger`) |
+| `actions.clear_meal_service` | string | `jow.clear_meal` | Surcharge du service appelé par « Effacer ce jour » |
 | `actions.refresh_shopping` | bool | `false` | Bouton « Régénérer la liste de courses » (`jow.refresh_shopping_list`) |
 | `actions.send_jow` | bool | `false` | Bouton « Envoyer à Jow » (ouvre les recettes sur jow.fr) |
 | `actions.copy_meal` | bool | `false` | Bouton « Copier vers… » (`jow.copy_meal`) |

@@ -14,6 +14,14 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
+const CARD_VERSION = "1.5.25";
+
+console.info(
+  `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
+  "color:#F2EFE9;background:#1A1816;font-weight:700;padding:2px 4px;border-radius:3px 0 0 3px",
+  "color:#1A1816;background:#F2EFE9;padding:2px 4px;border-radius:0 3px 3px 0"
+);
+
 const JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
 const COURTS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 

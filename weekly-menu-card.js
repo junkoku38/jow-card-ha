@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.8.2";
+const CARD_VERSION = "1.9.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -94,6 +94,8 @@ const DEFAUTS = {
     favoris: false,         // Choisir parmi les favoris
     rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
     import_jow: false,      // Importer le menu depuis jow.fr/l'app (jow.import_menu)
+    clear_week: false,      // Vider la semaine (rejets mémorisés)
+    renew_week: false,      // Renouveler la semaine (vider + replan IA)
     send_jow_mode: "tabs",  // "tabs" = ouvrir jow.fr, "service" = jow.send_menu (avec dates)
   },
 };
@@ -146,6 +148,24 @@ const ACTIONS_PREDEFINIES = {
     service: "jow.import_menu",
     data: {},
     confirm: null,
+  },
+  clear_week: {
+    label: "Vider la semaine",
+    icon: "🗑",
+    // Efface les 7 repas de la semaine affichée ; les plats nourrissent
+    // la mémoire des rejets (plus reproposés 60 jours).
+    service: "jow.clear_week",
+    data: {},
+    confirm: "Vider les 7 repas de la semaine affichée ? Les plats seront mémorisés comme refusés (non reproposés pendant 60 jours).",
+  },
+  renew_week: {
+    label: "Renouveler la semaine",
+    icon: "🎲",
+    // Vide (rejets mémorisés) puis replanifie la semaine entière via
+    // le pipeline IA (jow.renew_week, intégration ≥ 0.12.0).
+    service: "jow.renew_week",
+    data: {},
+    confirm: "Renouveler toute la semaine ? Les 7 plats actuels seront remplacés par de nouvelles suggestions IA.",
   },
   copy_meal: {
     label: "Copier vers…",
@@ -427,6 +447,7 @@ const STYLES = `
      distinguer des bascules S/S+1. */
   .semaine-bascule .sync-btn { opacity: 0.85; margin-right: 4px; }
   .semaine-bascule .sync-btn:hover { border-color: var(--accent, #d8a25a); opacity: 1; }
+  .semaine-bascule .sync-btn.danger:hover { border-color: #d86a5a; }
   .info-btn { border: none; background: none; color: var(--gris); font-size: 0.8rem; cursor: pointer; opacity: 0.5; }
   .info-btn:hover { opacity: 1; }
   .info-popup {
@@ -833,6 +854,8 @@ class WeeklyMenuCard extends HTMLElement {
           <span>
             ${actionsCfg.import_jow ? `<button data-import-jow="1" class="sync-btn" title="Importer le menu depuis jow.fr / l'app (jours vides seulement)" aria-label="Importer le menu depuis Jow"${this._occupe ? " disabled" : ""}>⇄ Jow</button>` : ""}
             ${actionsCfg.send_jow ? `<button data-envoyer-jow="1" class="sync-btn" title="${actionsCfg.send_jow_mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${actionsCfg.send_jow_mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>` : ""}
+            ${actionsCfg.clear_week ? `<button data-action-semaine="clear_week" class="sync-btn danger" title="Vider les 7 repas de la semaine affichée (plats mémorisés comme refusés)" aria-label="Vider la semaine"${this._occupe ? " disabled" : ""}>🗑 Semaine</button>` : ""}
+            ${actionsCfg.renew_week ? `<button data-action-semaine="renew_week" class="sync-btn" title="Renouveler toute la semaine : vider + 7 nouvelles suggestions IA" aria-label="Renouveler la semaine"${this._occupe ? " disabled" : ""}>🎲 Renouveler</button>` : ""}
             <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
             <button data-semaine="1" aria-label="Semaine prochaine" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
             <button class="info-btn" data-info="1" title="Contexte IA" aria-label="Contexte IA (allergies, préférences, interdits)">ℹ</button>
@@ -954,14 +977,14 @@ class WeeklyMenuCard extends HTMLElement {
       : "";
 
     // Boutons d'action prédéfinis (meal_done, clear_meal, copy_meal,
-    // favoris, rescue) — refresh_shopping est déplacé en bas de la carte,
-    // send_jow et import_jow dans l'en-tête (ils agissent sur la semaine
-    // entière, pas sur le jour affiché).
+    // favoris, rescue) — refresh_shopping est déplacé en bas de la carte ;
+    // send_jow, import_jow, clear_week et renew_week dans l'en-tête (ils
+    // agissent sur la semaine entière, pas sur le jour affiché).
     // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
     const OPTIONAL_ACTIONS = new Set(["favoris", "rescue"]);
-    const DETAIL_EXCLUS = new Set(["send_jow", "import_jow"]);
+    const DETAIL_EXCLUS = new Set(["send_jow", "import_jow", "clear_week", "renew_week"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
         if (key === "refresh_shopping") return false;
@@ -1792,6 +1815,52 @@ class WeeklyMenuCard extends HTMLElement {
     }
   }
 
+  /** Action sur la semaine entière (en-tête) : clear_week / renew_week.
+   *  Suivent la semaine affichée (S/S+1) et l'instance configurée. */
+  async _actionSemaine(key, def) {
+    if (this._occupe || !this._hass) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    // renew : long (7 suggestions IA) — message d'attente dédié
+    this._toast(key === "renew_week"
+      ? "🎲 Renouvellement de la semaine en cours (7 suggestions IA)…"
+      : `${def.icon} …`);
+    try {
+      const data = { week_offset: this._weekOffset };
+      // renew : reprendre le contexte IA de la carte si configuré
+      if (key === "renew_week") {
+        const ra = this._config.replace_action;
+        if (ra?.data?.ai_entity) data.ai_entity = ra.data.ai_entity;
+        if (ra?.data?.weather_entity) data.weather_entity = ra.data.weather_entity;
+        if (ra?.data?.covers) data.covers = ra.data.covers;
+        if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
+        const preset = this._config.criteria_presets?.[0];
+        if (preset?.max_calories) data.max_calories = preset.max_calories;
+        if (preset?.max_total_time) data.max_total_time = preset.max_total_time;
+      }
+      const resp = await this._jowCallWS(key, data);
+      const r = resp?.response || {};
+      if (key === "renew_week") {
+        const planned = r.planned ?? 0;
+        const failed = Object.keys(r.failures || {}).length;
+        this._toast(planned > 0
+          ? `✓ Semaine renouvelée : ${planned} nouveaux plats${failed ? ` (${failed} échecs)` : ""}`
+          : "Aucune suggestion disponible — vérifiez l'agent IA", planned === 0);
+      } else {
+        this._toast("✓ Semaine vidée (plats mémorisés comme refusés)");
+      }
+    } catch (err) {
+      console.error(`weekly-menu-card : échec ${key}`, err);
+      this._toast("✕ Action impossible", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
+    }
+  }
+
   /** Envoi du planning au compte Jow via jow.send_menu (avec dates). */
   async _envoyerJowService() {
     if (this._occupe || !this._hass) return;
@@ -2069,6 +2138,18 @@ class WeeklyMenuCard extends HTMLElement {
     R.querySelectorAll("[data-import-jow]").forEach((el) => {
       el.addEventListener("click", () => this._importerDepuisJow());
     });
+    // Actions semaine entière : vider / renouveler (avec confirmation)
+    R.querySelectorAll("[data-action-semaine]").forEach((el) => {
+      el.addEventListener("click", async () => {
+        const key = el.dataset.actionSemaine;
+        const def = ACTIONS_PREDEFINIES[key];
+        if (!def || this._occupe || !this._hass) return;
+        const act = _serviceAction(this._config, key);
+        const confirmText = act?.confirm ?? def.confirm;
+        if (confirmText && !(await this._dialogue(confirmText, { danger: true, ouiLabel: "Confirmer" }))) return;
+        await this._actionSemaine(key, def);
+      });
+    });
     R.querySelectorAll("[data-envoyer-jow]").forEach((el) => {
       el.addEventListener("click", () => this._envoyerJow());
     });
@@ -2275,6 +2356,8 @@ const LIBELLES = {
   action_favoris: "Bouton « Choisir parmi mes favoris »",
   action_rescue: "Bouton « Sauver les périssables » (suggest rescue)",
   action_import_jow: "Bouton « Importer depuis Jow » (menu jow.fr → planning)",
+  action_clear_week: "Bouton « Vider la semaine » (en-tête)",
+  action_renew_week: "Bouton « Renouveler la semaine » (en-tête)",
   send_jow_mode: "Mode du bouton Envoyer à Jow (tabs = ouvrir jow.fr, service = jow.send_menu)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
@@ -2441,6 +2524,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_favoris", selector: { boolean: {} } },
         { name: "action_rescue", selector: { boolean: {} } },
         { name: "action_import_jow", selector: { boolean: {} } },
+        { name: "action_clear_week", selector: { boolean: {} } },
+        { name: "action_renew_week", selector: { boolean: {} } },
         { name: "send_jow_mode", selector: { select: { options: ["tabs", "service"] } } },
       ]},
       // ---- Instance & Entités S0 ----
@@ -2566,6 +2651,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_favoris: (this._config.actions || {}).favoris === true,
         action_rescue: (this._config.actions || {}).rescue === true,
         action_import_jow: (this._config.actions || {}).import_jow === true,
+        action_clear_week: (this._config.actions || {}).clear_week === true,
+        action_renew_week: (this._config.actions || {}).renew_week === true,
         send_jow_mode: (this._config.actions || {}).send_jow_mode || this._config.send_jow_mode || "tabs",
         meal_done_service: (this._config.actions || {}).meal_done_service || "",
         clear_meal_service: (this._config.actions || {}).clear_meal_service || "",
@@ -2645,6 +2732,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(actionsData.action_favoris === true ? { favoris: true } : {}),
           ...(actionsData.action_rescue === true ? { rescue: true } : {}),
           ...(actionsData.action_import_jow === true ? { import_jow: true } : {}),
+          ...(actionsData.action_clear_week === true ? { clear_week: true } : {}),
+          ...(actionsData.action_renew_week === true ? { renew_week: true } : {}),
           ...(actionsData.send_jow_mode ? { send_jow_mode: actionsData.send_jow_mode } : {}),
         };
         // Services personnalisés (surcharge de jow.* par défaut)
@@ -2762,6 +2851,10 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <label for="jc15">${LIBELLES.action_rescue}</label></div>
         <div class="case"><input type="checkbox" id="jc16" data-cle="action_import_jow"${(this._config.actions || {}).import_jow === true ? " checked" : ""}>
           <label for="jc16">${LIBELLES.action_import_jow}</label></div>
+        <div class="case"><input type="checkbox" id="jc17" data-cle="action_clear_week"${(this._config.actions || {}).clear_week === true ? " checked" : ""}>
+          <label for="jc17">${LIBELLES.action_clear_week}</label></div>
+        <div class="case"><input type="checkbox" id="jc18" data-cle="action_renew_week"${(this._config.actions || {}).renew_week === true ? " checked" : ""}>
+          <label for="jc18">${LIBELLES.action_renew_week}</label></div>
         <label><span class="lib">${LIBELLES.send_jow_mode}</span>
           <select data-cle="send_jow_mode">
             <option value="tabs"${(this._config.send_jow_mode !== "service") ? " selected" : ""}>Ouvrir jow.fr (onglets)</option>

@@ -73,6 +73,8 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `actions.rescue` | bool | `false` | Bouton « Sauver les périssables » — `jow.suggest` avec `rescue_expiry: true` : l'IA reçoit les ingrédients du planning qui expirent sous 3 jours (viandes, crèmerie, légumes frais) et génère une recette pour les écouler. Nécessite jow-meals ≥ 0.11.0. |
 | `actions.import_jow` | bool | `false` | Bouton « Importer depuis Jow » — `jow.import_menu` : les plats ajoutés sur jow.fr/l'app mobile atterrissent sur les jours vides du planning (jamais d'écrasement). Rapport importé/ignoré en toast. Nécessite jow-meals ≥ 0.11.0. |
 | `send_jow_mode` | string | `tabs` | Mode du bouton « Envoyer à Jow » : `tabs` = ouvre les recettes sur jow.fr (comportement historique) ; `service` = `jow.send_menu` — le menu du compte Jow se remplit jour par jour (dates + couverts). Nécessite jow-meals ≥ 0.11.0. |
+| `actions.clear_week` | bool | `false` | Bouton « 🗑 Semaine » (en-tête) : vide les 7 repas de la semaine affichée — les plats sont mémorisés comme refusés (non reproposés 60 jours). Nécessite jow-meals ≥ 0.12.0. |
+| `actions.renew_week` | bool | `false` | Bouton « 🎲 Renouveler » (en-tête) : vide la semaine (rejets mémorisés) puis la replanifie entièrement via le pipeline IA (reprend l'agent/météo/couverts du `replace_action`). Nécessite jow-meals ≥ 0.12.0. |
 | `attributes` | map | ha-jow | Correspondance attributs pour intégrations tierces (Mealie, Tandoor…) : `name`, `planned`, `image`, `url`, `date`, `calories`, `allergens`, `covers`, `duration`, `cooking_time`, `ingredients` |
 
 ## Interactions

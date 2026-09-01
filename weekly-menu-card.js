@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.8.0";
+const CARD_VERSION = "1.8.1";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -89,8 +89,8 @@ const DEFAUTS = {
     meal_done: true,        // Marquer le repas comme fait
     clear_meal: true,       // Effacer le repas du jour
     refresh_shopping: false,// Régénérer la liste de courses
-    copy_meal: false,       // Copier vers un autre jour (restes)
-    send_jow: false,        // Envoyer à Jow (ouvre jow.fr)
+    copy_meal: false,       // Copier vers un autre jour (restes) — optionnel
+    send_jow: false,        // Envoyer à Jow — optionnel (tabs) ou jow.send_menu (service)
     favoris: false,         // Choisir parmi les favoris
     rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
     import_jow: false,      // Importer le menu depuis jow.fr/l'app (jow.import_menu)
@@ -950,7 +950,7 @@ class WeeklyMenuCard extends HTMLElement {
     // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
-    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "import_jow"]);
+    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "import_jow", "send_jow", "copy_meal"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
         if (key === "refresh_shopping") return false;
@@ -2637,12 +2637,16 @@ class WeeklyMenuCardEditor extends HTMLElement {
           meal_done: actionsData.action_meal_done !== false,
           clear_meal: actionsData.action_clear_meal !== false,
           refresh_shopping: actionsData.action_refresh_shopping === true,
-          send_jow: actionsData.action_send_jow === true,
-          copy_meal: actionsData.action_copy_meal === true,
-          favoris: actionsData.action_favoris === true,
-          rescue: actionsData.action_rescue === true,
-          import_jow: actionsData.action_import_jow === true,
-          send_jow_mode: actionsData.send_jow_mode || undefined,
+          // Boutons optionnels : false n'est PAS émis (le défaut DEFAUTS
+          // s'applique côté rendu) — sinon l'éditeur écraserait le défaut
+          // true des boutons non-optionnels comme send_jow/copy_meal et
+          // les ferait disparaître (le filtre !== false lit actions.*).
+          ...(actionsData.action_send_jow === true ? { send_jow: true } : {}),
+          ...(actionsData.action_copy_meal === true ? { copy_meal: true } : {}),
+          ...(actionsData.action_favoris === true ? { favoris: true } : {}),
+          ...(actionsData.action_rescue === true ? { rescue: true } : {}),
+          ...(actionsData.action_import_jow === true ? { import_jow: true } : {}),
+          ...(actionsData.send_jow_mode ? { send_jow_mode: actionsData.send_jow_mode } : {}),
         };
         // Services personnalisés (surcharge de jow.* par défaut)
         for (const champ of ["meal_done_service", "clear_meal_service"]) {
@@ -2845,12 +2849,14 @@ class WeeklyMenuCardEditor extends HTMLElement {
         meal_done: actionBool("action_meal_done") !== false,
         clear_meal: actionBool("action_clear_meal") !== false,
         refresh_shopping: actionBool("action_refresh_shopping") === true,
-        send_jow: actionBool("action_send_jow") === true,
-        copy_meal: actionBool("action_copy_meal") === true,
-        favoris: actionBool("action_favoris") === true,
-        rescue: actionBool("action_rescue") === true,
-        import_jow: actionBool("action_import_jow") === true,
-        send_jow_mode: lire("send_jow_mode") === "service" ? "service" : undefined,
+        // Boutons optionnels : false non émis (le défaut s'applique côté
+        // rendu) — même correction que l'éditeur ha-form.
+        ...(actionBool("action_send_jow") === true ? { send_jow: true } : {}),
+        ...(actionBool("action_copy_meal") === true ? { copy_meal: true } : {}),
+        ...(actionBool("action_favoris") === true ? { favoris: true } : {}),
+        ...(actionBool("action_rescue") === true ? { rescue: true } : {}),
+        ...(actionBool("action_import_jow") === true ? { import_jow: true } : {}),
+        ...(lire("send_jow_mode") === "service" ? { send_jow_mode: "service" } : {}),
       },
     });
   }

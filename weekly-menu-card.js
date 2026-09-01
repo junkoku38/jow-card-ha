@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.9.0";
+const CARD_VERSION = "2.0.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -57,6 +57,12 @@ const DEFAUTS = {
   show_allergens: true,
   show_week_calories: false,   // Total calories de la semaine en pied de carte
   show_month: false,           // Vue mensuelle compacte (4 semaines)
+  // Vue panier & santé (v2.0) : bloc sous la semaine affichant
+  // sensor.jow_panier_jow / sensor.jow_synchro / sensor.jow_compte et un
+  // bouton « Préparer la commande » (jow.order_cart). Lecture seule
+  // ici — le paiement reste sur jow.fr ou via le service jow.order_pay.
+  show_cart: false,
+  order_button: false,   // bouton « Préparer la commande » (jow.order_cart)
   // Instance Jow à cibler en multi-instance (param entry_name des services
   // jow.*) ; vide = instance par défaut.
   entry_name: "",
@@ -447,6 +453,11 @@ const STYLES = `
      distinguer des bascules S/S+1. */
   .semaine-bascule .sync-btn { opacity: 0.85; margin-right: 4px; }
   .semaine-bascule .sync-btn:hover { border-color: var(--accent, #d8a25a); opacity: 1; }
+  .panier-sante { margin: 10px 22px 4px; padding: 10px 14px; border: 1px solid var(--filet); border-radius: 10px; font-size: 0.82rem; }
+  .panier-sante .ps-row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .panier-sante .ps-ok { color: #4a9; }
+  .panier-sante .ps-ko { color: #d86a5a; }
+  .panier-sante .bouton { width: 100%; margin-top: 8px; }
   .semaine-bascule .sync-btn.danger:hover { border-color: #d86a5a; }
   .info-btn { border: none; background: none; color: var(--gris); font-size: 0.8rem; cursor: pointer; opacity: 0.5; }
   .info-btn:hover { opacity: 1; }
@@ -875,6 +886,7 @@ class WeeklyMenuCard extends HTMLElement {
           : this._vueDetail(jours[vedette], planifies.length)}
         ${unSeulJour ? "" : this._index(jours, vedette)}
         ${unSeulJour ? "" : this._boutonSemaineSuivante()}
+        ${this._vuePanierSante()}
         ${this._config.show_allergens && codesPied.length ? `
           <p class="legende">
             ${codesPied.map((c) => this._esc(c.code ? `${c.code} ${c.label}` : c.label)).join(" · ")}${
@@ -1063,6 +1075,69 @@ class WeeklyMenuCard extends HTMLElement {
   /** Bouton pour planifier toute la semaine prochaine via jow.suggest.
    *  Appelle le service 7 fois (une par jour) avec week_offset=1, en
    *  dédupliquant les recettes déjà planifiées. */
+  /** Vue panier & santé (v2.0, show_cart) : capteurs d'état de la refonte
+   *  + bouton de préparation de commande (lecture seule, sans paiement). */
+  _vuePanierSante() {
+    if (!this._config.show_cart || !this._hass) return "";
+    const pre = (this._config.entity_prefix || this._config.prefix || "sensor.jow_").replace(/jow_$/, "jow_");
+    const synchro = this._hass.states[`${pre}synchro`];
+    const compte = this._hass.states[`${pre}compte`];
+    const panier = this._hass.states[`${pre}panier_jow`];
+    if (!synchro && !compte && !panier) return "";
+    const rows = [];
+    if (synchro) {
+      const etat = this._esc(synchro.state);
+      const ok = synchro.state === "ok";
+      rows.push(`<div class="ps-row"><span>🔔 Synchro</span><span class="${ok ? "ps-ok" : "ps-ko"}">${etat}</span></div>`);
+    }
+    if (compte) {
+      const prefs = compte.attributes && compte.attributes.preferences;
+      rows.push(`<div class="ps-row"><span>👤 Compte</span><span>${this._esc(compte.state)}${prefs ? ` · ${this._esc(prefs)}` : ""}</span></div>`);
+    }
+    if (panier) {
+      rows.push(`<div class="ps-row"><span>🛒 Panier jow.fr</span><span>${this._esc(String(panier.state))} plats</span></div>`);
+    }
+    const bouton = this._config.order_button
+      ? `<button class="bouton" data-order-cart="1"${this._occupe ? " disabled" : ""}> Préparer la commande (panier fournisseur)</button>`
+      : "";
+    return `<div class="panier-sante">
+      <p class="compo-titre">Jow · synchro & commande</p>
+      ${rows.join("")}
+      ${bouton}
+    </div>`;
+  }
+
+  /** Prépare le panier fournisseur (jow.order_cart) — sans paiement. */
+  async _preparerCommande() {
+    if (this._occupe || !this._hass) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    this._toast("Préparation du panier fournisseur…");
+    try {
+      const resp = await this._jowCallWS("order_cart", {});
+      const r = resp?.response || {};
+      if (r.error === "token_jow_absent") {
+        this._toast("Aucun compte Jow configuré", true);
+      } else if (r.error && String(r.error).startsWith("http_")) {
+        this._toast("Jow a refusé (magasin configuré sur jow.fr ?)", true);
+      } else {
+        const items = r.items ?? 0;
+        this._toast(items > 0
+          ? `✓ Panier préparé : ${items} articles${r.total ? ` · ${this._esc(String(r.total))}` : ""}`
+          : "Panier vide — menu Jow vide ?", items === 0);
+      }
+    } catch (err) {
+      console.error("weekly-menu-card : échec order_cart", err);
+      this._toast("✕ Préparation impossible", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
+    }
+  }
+
   _boutonSemaineSuivante() {
     const action = this._action();
     if (!action) return "";
@@ -2138,6 +2213,10 @@ class WeeklyMenuCard extends HTMLElement {
     R.querySelectorAll("[data-import-jow]").forEach((el) => {
       el.addEventListener("click", () => this._importerDepuisJow());
     });
+    // Panier fournisseur (vue panier & santé)
+    R.querySelectorAll("[data-order-cart]").forEach((el) => {
+      el.addEventListener("click", () => this._preparerCommande());
+    });
     // Actions semaine entière : vider / renouveler (avec confirmation)
     R.querySelectorAll("[data-action-semaine]").forEach((el) => {
       el.addEventListener("click", async () => {
@@ -2934,6 +3013,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
       ...(prefix && prefix !== DEFAUTS.prefix ? { prefix } : {}),
       ...(entry_name ? { entry_name } : {}),
       ...(fridge ? { fridge_ingredients: fridge } : {}),
+      ...(lire("show_cart") ? { show_cart: true } : {}),
+      ...(lire("order_button") ? { order_button: true } : {}),
       ...(Object.keys(day_themes).length ? { day_themes } : {}),
       ...(Object.keys(entitiesS1).length ? { entities_s1: entitiesS1 } : {}),
       ...(entities.length === 7 ? { entities } : {}),

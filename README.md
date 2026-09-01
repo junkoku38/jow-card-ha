@@ -56,6 +56,8 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `show_allergens` | bool | `true` | Allergènes (codes INCO 1-14) dans le détail, l'index et le pied |
 | `show_week_calories` | bool | `false` | Total et moyenne kcal/semaine en pied de carte |
 | `show_month` | bool | `false` | Vue mensuelle : les semaines dont les entités existent (S, S+1, et S-1/S+2 si présentes) |
+| `show_cart` | bool | `false` | Bloc « Jow · synchro & commande » : santé de la synchro (`sensor.jow_synchro`), compte, panier jow.fr. Nécessite jow-meals ≥ 1.0.0. |
+| `order_button` | bool | `false` | Bouton « Préparer la commande » dans ce bloc — `jow.order_cart` : ajoute les ingrédients du menu au panier fournisseur (sans paiement ; le paiement reste sur jow.fr ou via `jow.order_pay` avec `confirm: true`). Nécessite jow-meals ≥ 1.0.0. |
 | `replace_action` | map | — | Action de remplacement : `{ service: "domaine.svc", data: {...} }` avec jetons `{date}`, `{weekday}`, `{index}` |
 | `replace_ai_prompt` | string | — | Prompt IA personnalisé (envoyé comme `ai_prompt`) |
 | `day_themes` | map | `{}` | Thème par jour injecté dans le criteria (ex : `{ "lundi": "végétarien" }`) |

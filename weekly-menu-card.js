@@ -1082,7 +1082,9 @@ class WeeklyMenuCard extends HTMLElement {
     const pre = (this._config.entity_prefix || this._config.prefix || "sensor.jow_").replace(/jow_$/, "jow_");
     const synchro = this._hass.states[`${pre}synchro`];
     const compte = this._hass.states[`${pre}compte`];
-    const panier = this._hass.states[`${pre}panier_jow`];
+    // Le nom du capteur v2.0 est « Plats dans Jow » → sensor.jow_plats_dans_jow ;
+    // on accepte aussi l'ancien panier_jow au cas où l'utilisateur l'ait renommé.
+    const panier = this._hass.states[`${pre}plats_dans_jow`] || this._hass.states[`${pre}panier_jow`];
     if (!synchro && !compte && !panier) return "";
     const rows = [];
     if (synchro) {
@@ -1095,7 +1097,7 @@ class WeeklyMenuCard extends HTMLElement {
       rows.push(`<div class="ps-row"><span>👤 Compte</span><span>${this._esc(compte.state)}${prefs ? ` · ${this._esc(prefs)}` : ""}</span></div>`);
     }
     if (panier) {
-      rows.push(`<div class="ps-row"><span>🛒 Panier jow.fr</span><span>${this._esc(String(panier.state))} plats</span></div>`);
+      rows.push(`<div class="ps-row"><span>🛒 Plats dans Jow</span><span>${this._esc(String(panier.state))} ${panier.state === "indisponible" ? "" : "plats"}</span></div>`);
     }
     const bouton = this._config.order_button
       ? `<button class="bouton" data-order-cart="1"${this._occupe ? " disabled" : ""}> Préparer la commande (panier fournisseur)</button>`

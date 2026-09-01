@@ -864,7 +864,7 @@ class WeeklyMenuCard extends HTMLElement {
           <span>${this._weekOffset === 0 ? "Cette semaine" : "Semaine prochaine"}</span>
           <span>
             ${actionsCfg.import_jow ? `<button data-import-jow="1" class="sync-btn" title="Importer le menu depuis jow.fr / l'app (jours vides seulement)" aria-label="Importer le menu depuis Jow"${this._occupe ? " disabled" : ""}>⇄ Jow</button>` : ""}
-            ${actionsCfg.send_jow ? `<button data-envoyer-jow="1" class="sync-btn" title="${actionsCfg.send_jow_mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${actionsCfg.send_jow_mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>` : ""}
+            ${actionsCfg.send_jow ? (() => { const mode = this._sendJowMode(); return `<button data-envoyer-jow="1" class="sync-btn" title="${mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>`; })() : ""}
             ${actionsCfg.clear_week ? `<button data-action-semaine="clear_week" class="sync-btn danger" title="Vider les 7 repas de la semaine affichée (plats mémorisés comme refusés)" aria-label="Vider la semaine"${this._occupe ? " disabled" : ""}>🗑 Semaine</button>` : ""}
             ${actionsCfg.renew_week ? `<button data-action-semaine="renew_week" class="sync-btn" title="Renouveler toute la semaine : vider + 7 nouvelles suggestions IA" aria-label="Renouveler la semaine"${this._occupe ? " disabled" : ""}>🎲 Renouveler</button>` : ""}
             <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
@@ -1190,7 +1190,11 @@ class WeeklyMenuCard extends HTMLElement {
       Object.assign(data, avecPreset);
       if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
       try {
-        await this._hass.callService(action.domaine, action.service, data);
+        if (action.domaine === "jow") {
+          await this._jowCall(action.service, data);
+        } else {
+          await this._hass.callService(action.domaine, action.service, data);
+        }
         succes++;
         this._toast(`S+1 : ${succes}/7 jours planifiés`);
       } catch (err) {
@@ -1844,11 +1848,19 @@ class WeeklyMenuCard extends HTMLElement {
    *  L'utilisateur n'a plus qu'à cliquer "Ajouter au menu" sur chacune.
    *  On ouvre le premier onglet directement (user gesture, pas de popup
    *  blocker) et les autres via une fenêtre intermédiaire avec des liens. */
+  /** Mode du bouton Envoyer : source unique — actions.send_jow_mode
+   *  (éditeur graphique) d'abord, repli sur la clé racine (YAML manuel).
+   *  Avant, le libellé lisait actions.* et l'action la racine : le
+   *  bouton affichait « Envoyer » mais ouvrait des onglets. */
+  _sendJowMode() {
+    const a = this._config.actions || {};
+    return a.send_jow_mode || this._config.send_jow_mode || "tabs";
+  }
+
   _envoyerJow() {
-    // Mode service : le vrai envoi via jow.send_menu (v0.11.0 de
-    // l'intégration) — chaque recette part avec sa date et ses couverts,
-    // le menu jow.fr se remplit jour par jour.
-    if (this._config.send_jow_mode === "service") {
+    // Mode service : le vrai envoi via jow.send_menu — chaque recette
+    // part avec sa date et ses couverts.
+    if (this._sendJowMode() === "service") {
       this._envoyerJowService();
       return;
     }
@@ -2066,7 +2078,11 @@ class WeeklyMenuCard extends HTMLElement {
     this._signature = null;
     this._render();
     try {
-      await this._hass.callService(action.domaine, action.service, data);
+      if (action.domaine === "jow") {
+        await this._jowCall(action.service, data);
+      } else {
+        await this._hass.callService(action.domaine, action.service, data);
+      }
     } catch (err) {
       console.error(`weekly-menu-card : échec de ${action.domaine}.${action.service}`, err);
       this._toast("✕ Recette non remplacée — erreur", true);
@@ -2106,7 +2122,11 @@ class WeeklyMenuCard extends HTMLElement {
     this._signature = null;
     this._render();
     try {
-      await this._hass.callService(action.domaine, action.service, data);
+      if (action.domaine === "jow") {
+        await this._jowCall(action.service, data);
+      } else {
+        await this._hass.callService(action.domaine, action.service, data);
+      }
       this._toast(`✓ Recherche lancée pour ${JOURS[i]}`);
     } catch (err) {
       console.error(`weekly-menu-card : échec suggest personnalisé`, err);

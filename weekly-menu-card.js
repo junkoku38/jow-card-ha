@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.4";
+const CARD_VERSION = "1.6.5";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -1128,9 +1128,24 @@ class WeeklyMenuCard extends HTMLElement {
       try {
         // callWS avec return_response au niveau top-level (pas dans service_data)
         const resp = await this._jowCallWS("sync_favorites");
-        const recipes = (resp && resp.response && resp.response.recipes) || [];
+        const payload = (resp && resp.response) || {};
+        const recipes = payload.recipes || [];
+        if (payload.error === "token_jow_absent") {
+          this._toast("Aucun compte Jow configuré (refresh token requis)", true);
+          this._occupe = false;
+          this._signature = null;
+          this._render();
+          return;
+        }
+        if (payload.error === "auth_echouee") {
+          this._toast("Authentification Jow échouée — vérifiez le refresh token", true);
+          this._occupe = false;
+          this._signature = null;
+          this._render();
+          return;
+        }
         if (!recipes.length) {
-          this._toast("Aucun favori trouvé — token Jow requis", true);
+          this._toast("Aucun favori dans votre compte Jow", true);
           this._occupe = false;
           this._signature = null;
           this._render();
@@ -1181,12 +1196,17 @@ class WeeklyMenuCard extends HTMLElement {
           btn.disabled = true;
           btn.textContent = "…";
           try {
-            await this._jowCall("plan_meal", {
+            // Épingler par id exact quand disponible (favori Jow) : la
+            // recherche par titre peut matcher une variante du même nom.
+            // Repli query si l'id est absent.
+            const data = {
               query: nom,
               weekday: JOURS[this._selection ?? this._aujourdhui()],
               week_offset: this._weekOffset,
               choice: 1,
-            });
+            };
+            if (rec.id || rec._id) data.recipe_id = String(rec.id || rec._id);
+            await this._jowCall("plan_meal", data);
             btn.textContent = "✓ Planifié";
             btn.style.borderColor = "#4a9";
           } catch (err) {

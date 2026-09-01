@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.8.1";
+const CARD_VERSION = "1.8.2";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -423,6 +423,10 @@ const STYLES = `
   }
   .semaine-bascule button:hover { opacity: 1; border-color: var(--gris); }
   .semaine-bascule button.actif { opacity: 1; border-color: var(--gris); }
+  /* Boutons de synchro Jow (en-tête) : accent visuel discret pour les
+     distinguer des bascules S/S+1. */
+  .semaine-bascule .sync-btn { opacity: 0.85; margin-right: 4px; }
+  .semaine-bascule .sync-btn:hover { border-color: var(--accent, #d8a25a); opacity: 1; }
   .info-btn { border: none; background: none; color: var(--gris); font-size: 0.8rem; cursor: pointer; opacity: 0.5; }
   .info-btn:hover { opacity: 1; }
   .info-popup {
@@ -810,6 +814,8 @@ class WeeklyMenuCard extends HTMLElement {
     const jours = JOURS.map((_, i) => this._jour(i));
     const vedette = this._indexAffiche(jours);
     const planifies = jours.filter((j) => j.planned);
+    // Actions au niveau CARTE (synchro Jow) : lues ici pour l'en-tête.
+    const actionsCfg = this._config.actions || {};
 
     const unSeulJour = this._config.days === 1;
     const estimes = planifies.some((j) => j.estimes);
@@ -825,6 +831,8 @@ class WeeklyMenuCard extends HTMLElement {
         <div class="semaine-bascule">
           <span>${this._weekOffset === 0 ? "Cette semaine" : "Semaine prochaine"}</span>
           <span>
+            ${actionsCfg.import_jow ? `<button data-import-jow="1" class="sync-btn" title="Importer le menu depuis jow.fr / l'app (jours vides seulement)" aria-label="Importer le menu depuis Jow"${this._occupe ? " disabled" : ""}>⇄ Jow</button>` : ""}
+            ${actionsCfg.send_jow ? `<button data-envoyer-jow="1" class="sync-btn" title="${actionsCfg.send_jow_mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${actionsCfg.send_jow_mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>` : ""}
             <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
             <button data-semaine="1" aria-label="Semaine prochaine" class="${this._weekOffset === 1 ? "actif" : ""}">S+1</button>
             <button class="info-btn" data-info="1" title="Contexte IA" aria-label="Contexte IA (allergies, préférences, interdits)">ℹ</button>
@@ -945,32 +953,23 @@ class WeeklyMenuCard extends HTMLElement {
          </button>`
       : "";
 
-    // Boutons d'action prédéfinis (meal_done, clear_meal, send_jow, copy_meal,
-    // favoris, rescue) — refresh_shopping est déplacé en bas de la carte.
+    // Boutons d'action prédéfinis (meal_done, clear_meal, copy_meal,
+    // favoris, rescue) — refresh_shopping est déplacé en bas de la carte,
+    // send_jow et import_jow dans l'en-tête (ils agissent sur la semaine
+    // entière, pas sur le jour affiché).
     // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
-    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "import_jow", "send_jow", "copy_meal"]);
+    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue"]);
+    const DETAIL_EXCLUS = new Set(["send_jow", "import_jow"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
         if (key === "refresh_shopping") return false;
+        if (DETAIL_EXCLUS.has(key)) return false;
         if (OPTIONAL_ACTIONS.has(key)) return actionsConfig[key] === true;
         return actionsConfig[key] !== false;
       })
       .map(([key, def]) => {
-        // Import Jow → HA : handler dédié (rapport importé/ignoré).
-        if (key === "import_jow") {
-          return `<button class="bouton action" data-import-jow="1"${this._occupe ? " disabled" : ""}>
-            <span>${def.icon}</span> ${this._esc(def.label)}
-          </button>`;
-        }
-        // Le bouton "Envoyer à Jow" ouvre les recettes dans des onglets,
-        // pas un appel de service.
-        if (key === "send_jow") {
-          return `<button class="bouton action" data-envoyer-jow="1"${this._occupe ? " disabled" : ""}>
-            <span>${def.icon}</span> ${this._esc(def.label)}
-          </button>`;
-        }
         // Confirmation de l'action résolue (surcharge comprise)
         const act = _serviceAction(this._config, key);
         const confirmText = act?.confirm ?? def.confirm;

@@ -15,3 +15,15 @@ jobs:
           node-version: "22"
       - name: Syntaxe JS (node --check)
         run: node --check weekly-menu-card.js
+
+  eslint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install ESLint
+        run: npm install --no-save --no-fund --no-audit eslint @eslint/js
+      - name: Lint
+        run: npx eslint weekly-menu-card.js

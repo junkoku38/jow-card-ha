@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.1";
+const CARD_VERSION = "1.6.2";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -516,6 +516,12 @@ class WeeklyMenuCard extends HTMLElement {
 
   get hass() { return this._hass; }
 
+  /* set hass : une signature (état + last_updated + couverts + quantités
+     d'ingrédients + contexte UI) évite tout re-rendu superflu — HA pousse
+     un nouvel objet hass à chaque événement du bus, y compris ceux qui ne
+     concernent pas cette carte. En cas de changement réel, on reconstruit
+     le DOM de la carte : simple et sûr (pas de reconciliation partielle
+     à maintenir), le volume DOM reste modeste (~une centaine de noeuds). */
   set hass(hass) {
     const oldHass = this._hass;
     this._hass = hass;
@@ -633,7 +639,9 @@ class WeeklyMenuCard extends HTMLElement {
 
     const cal = this._champ(a, "calories");
     const duree = this._champ(a, "duration");
-    const cuisson = this._champ(a, "cooking_time") || a.cooking_time || null;
+    // Respecter la correspondance d'attributs configurée (attributes) —
+    // pas de fallback en dur qui court-circuiterait un remappage.
+    const cuisson = this._champ(a, "cooking_time") || null;
 
     return {
       index: i,
@@ -2427,6 +2435,18 @@ class WeeklyMenuCardEditor extends HTMLElement {
         <label for="jc1">${LIBELLES.show_calories}</label></div>
       <div class="case"><input type="checkbox" id="jc2" data-cle="show_allergens"${this._config.show_allergens !== false ? " checked" : ""}>
         <label for="jc2">${LIBELLES.show_allergens}</label></div>
+      <div class="case"><input type="checkbox" id="jc6" data-cle="show_week_calories"${this._config.show_week_calories === true ? " checked" : ""}>
+        <label for="jc6">${LIBELLES.show_week_calories}</label></div>
+      <div class="case"><input type="checkbox" id="jc7" data-cle="show_month"${this._config.show_month === true ? " checked" : ""}>
+        <label for="jc7">${LIBELLES.show_month}</label></div>
+      <div class="case"><input type="checkbox" id="jc8" data-cle="plan_next_enabled"${this._config.plan_next_enabled !== false ? " checked" : ""}>
+        <label for="jc8">${LIBELLES.plan_next_enabled}</label></div>
+      <fieldset><legend>${LIBELLES.context_section}</legend>
+        ${JOURS.map((j) => `<label><span class="lib">${LIBELLES[`day_themes_${j}`]}</span>
+          <input type="text" data-theme="${j}" value="${this._esc(this._config.day_themes?.[j] || "")}"></label>`).join("")}
+        <label><span class="lib">${LIBELLES.fridge_ingredients}</span>
+          <input type="text" data-cle="fridge_ingredients" value="${this._esc(this._config.fridge_ingredients || "")}"></label>
+      </fieldset>
       <fieldset><legend>${LIBELLES.replace_section}</legend>
         <div class="case"><input type="checkbox" id="jc3" data-cle="replace_enabled"${this._config.replace_action ? " checked" : ""}>
           <label for="jc3">${LIBELLES.replace_enabled}</label></div>
@@ -2440,13 +2460,35 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <input type="text" data-cle="replace_weather" placeholder="weather.gagny" value="${this._esc(this._config.replace_action?.data?.weather_entity || "")}"></label>
         <label><span class="lib">${LIBELLES.replace_ai}</span>
           <input type="text" data-cle="replace_ai" placeholder="ai_task.ollama_ai_task" value="${this._esc(this._config.replace_action?.data?.ai_entity || "")}"></label>
+        <label><span class="lib">${LIBELLES.replace_ai_prompt}</span>
+          <input type="text" data-cle="replace_ai_prompt" value="${this._esc(this._config.replace_ai_prompt || "")}"></label>
+      </fieldset>
+      <fieldset><legend>${LIBELLES.actions_section}</legend>
+        <div class="case"><input type="checkbox" id="jc9" data-cle="action_meal_done"${(this._config.actions || {}).meal_done !== false ? " checked" : ""}>
+          <label for="jc9">${LIBELLES.action_meal_done}</label></div>
+        <div class="case"><input type="checkbox" id="jc10" data-cle="action_clear_meal"${(this._config.actions || {}).clear_meal !== false ? " checked" : ""}>
+          <label for="jc10">${LIBELLES.action_clear_meal}</label></div>
+        <div class="case"><input type="checkbox" id="jc11" data-cle="action_refresh_shopping"${(this._config.actions || {}).refresh_shopping === true ? " checked" : ""}>
+          <label for="jc11">${LIBELLES.action_refresh_shopping}</label></div>
+        <div class="case"><input type="checkbox" id="jc12" data-cle="action_send_jow"${(this._config.actions || {}).send_jow === true ? " checked" : ""}>
+          <label for="jc12">${LIBELLES.action_send_jow}</label></div>
+        <div class="case"><input type="checkbox" id="jc13" data-cle="action_copy_meal"${(this._config.actions || {}).copy_meal === true ? " checked" : ""}>
+          <label for="jc13">${LIBELLES.action_copy_meal}</label></div>
+        <div class="case"><input type="checkbox" id="jc14" data-cle="action_favoris"${(this._config.actions || {}).favoris === true ? " checked" : ""}>
+          <label for="jc14">${LIBELLES.action_favoris}</label></div>
       </fieldset>
       <fieldset><legend>${LIBELLES.entites}</legend>
+        <label><span class="lib">${LIBELLES.prefix}</span>
+          <input type="text" data-cle="prefix" value="${this._esc(this._config.prefix || DEFAUTS.prefix)}"></label>
+        <label><span class="lib">${LIBELLES.entry_name}</span>
+          <input type="text" data-cle="entry_name" value="${this._esc(this._config.entry_name || "")}"></label>
         ${JOURS.map((j) => `<label><span class="lib">${cap(j)}</span>
           <input type="text" data-entite="${j}" value="${this._esc(ent[j])}"></label>`).join("")}
+        ${JOURS.map((j) => `<label><span class="lib">${LIBELLES[`s1${j}`]}</span>
+          <input type="text" data-entite-s1="${j}" value="${this._esc((this._config.entities_s1 || {})[j] || `${ent[j]}_s1`)}"></label>`).join("")}
       </fieldset>`;
 
-    this.shadowRoot.querySelectorAll("[data-cle],[data-entite]").forEach((el) => {
+    this.shadowRoot.querySelectorAll("[data-cle],[data-entite],[data-theme],[data-entite-s1]").forEach((el) => {
       el.addEventListener("change", () => this._collecter());
     });
   }
@@ -2461,6 +2503,21 @@ class WeeklyMenuCardEditor extends HTMLElement {
     const entities = JOURS
       .map((j) => (R.querySelector(`[data-entite="${j}"]`)?.value || "").trim())
       .filter(Boolean);
+    const entitiesS1 = {};
+    for (const j of JOURS) {
+      const v = (R.querySelector(`[data-entite-s1="${j}"]`)?.value || "").trim();
+      if (v) entitiesS1[j] = v;
+    }
+    const day_themes = {};
+    for (const j of JOURS) {
+      const v = (R.querySelector(`[data-theme="${j}"]`)?.value || "").trim();
+      if (v) day_themes[j] = v;
+    }
+    const actions = (this._config.actions || {});
+    const actionBool = (cle, defaut) => {
+      const v = lire(cle);
+      return v === undefined ? actions[cle.replace("action_", "")] : v;
+    };
 
     const replaceEnabled = lire("replace_enabled");
     const action = replaceEnabled ? {
@@ -2475,14 +2532,35 @@ class WeeklyMenuCardEditor extends HTMLElement {
       },
     } : null;
 
+    const prefix = (lire("prefix") || "").trim();
+    const entry_name = (lire("entry_name") || "").trim();
+    const fridge = (lire("fridge_ingredients") || "").trim();
+    const planNext = lire("plan_next_enabled");
+
     this._emettre({
       type: this._config.type,
       title: lire("title"),
       days: Number(lire("days")) === 1 ? 1 : 7,
       show_calories: lire("show_calories"),
       show_allergens: lire("show_allergens"),
+      show_week_calories: lire("show_week_calories"),
+      show_month: lire("show_month"),
       ...(action ? { replace_action: action } : { replace_action: null }),
+      ...(planNext === false ? { plan_next_enabled: false } : {}),
+      ...(prefix && prefix !== DEFAUTS.prefix ? { prefix } : {}),
+      ...(entry_name ? { entry_name } : {}),
+      ...(fridge ? { fridge_ingredients: fridge } : {}),
+      ...(Object.keys(day_themes).length ? { day_themes } : {}),
+      ...(Object.keys(entitiesS1).length ? { entities_s1: entitiesS1 } : {}),
       ...(entities.length === 7 ? { entities } : {}),
+      actions: {
+        meal_done: actionBool("action_meal_done") !== false,
+        clear_meal: actionBool("action_clear_meal") !== false,
+        refresh_shopping: actionBool("action_refresh_shopping") === true,
+        send_jow: actionBool("action_send_jow") === true,
+        copy_meal: actionBool("action_copy_meal") === true,
+        favoris: actionBool("action_favoris") === true,
+      },
     });
   }
 

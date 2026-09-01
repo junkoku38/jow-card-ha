@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.7.0";
+const CARD_VERSION = "1.8.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -93,6 +93,8 @@ const DEFAUTS = {
     send_jow: false,        // Envoyer à Jow (ouvre jow.fr)
     favoris: false,         // Choisir parmi les favoris
     rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
+    import_jow: false,      // Importer le menu depuis jow.fr/l'app (jow.import_menu)
+    send_jow_mode: "tabs",  // "tabs" = ouvrir jow.fr, "service" = jow.send_menu (avec dates)
   },
 };
 
@@ -129,8 +131,20 @@ const ACTIONS_PREDEFINIES = {
   send_jow: {
     label: "Envoyer à Jow",
     icon: "🛒",
+    // Deux comportements : le service jow.send_menu (avec dates, v0.11.0)
+    // si activé via send_jow_mode: "service", sinon l'ouverture d'onglets
+    // jow.fr historique (data-envoyer-jow géré à part).
     service: null,
     data: null,
+    confirm: null,
+  },
+  import_jow: {
+    label: "Importer depuis Jow",
+    icon: "⇄",
+    // Synchro Jow → HA : les plats ajoutés sur jow.fr/l'app atterrissent
+    // sur les jours vides du planning (jamais d'écrasement).
+    service: "jow.import_menu",
+    data: {},
     confirm: null,
   },
   copy_meal: {
@@ -936,7 +950,7 @@ class WeeklyMenuCard extends HTMLElement {
     // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
-    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue"]);
+    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "import_jow"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
         if (key === "refresh_shopping") return false;
@@ -944,6 +958,12 @@ class WeeklyMenuCard extends HTMLElement {
         return actionsConfig[key] !== false;
       })
       .map(([key, def]) => {
+        // Import Jow → HA : handler dédié (rapport importé/ignoré).
+        if (key === "import_jow") {
+          return `<button class="bouton action" data-import-jow="1"${this._occupe ? " disabled" : ""}>
+            <span>${def.icon}</span> ${this._esc(def.label)}
+          </button>`;
+        }
         // Le bouton "Envoyer à Jow" ouvre les recettes dans des onglets,
         // pas un appel de service.
         if (key === "send_jow") {
@@ -1726,6 +1746,13 @@ class WeeklyMenuCard extends HTMLElement {
    *  On ouvre le premier onglet directement (user gesture, pas de popup
    *  blocker) et les autres via une fenêtre intermédiaire avec des liens. */
   _envoyerJow() {
+    // Mode service : le vrai envoi via jow.send_menu (v0.11.0 de
+    // l'intégration) — chaque recette part avec sa date et ses couverts,
+    // le menu jow.fr se remplit jour par jour.
+    if (this._config.send_jow_mode === "service") {
+      this._envoyerJowService();
+      return;
+    }
     const jours = JOURS.map((_, i) => this._jour(i));
     const planifies = jours.filter((j) => j.planned && j.url);
     if (!planifies.length) return;
@@ -1763,6 +1790,62 @@ class WeeklyMenuCard extends HTMLElement {
         const urlBtn = e.target.closest("[data-url]");
         if (urlBtn) { window.open(urlBtn.dataset.url, "_blank", "noopener,noreferrer"); }
       });
+    }
+  }
+
+  /** Envoi du planning au compte Jow via jow.send_menu (avec dates). */
+  async _envoyerJowService() {
+    if (this._occupe || !this._hass) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    this._toast("Envoi du menu à Jow…");
+    try {
+      const resp = await this._jowCallWS("send_menu", { week_offset: this._weekOffset });
+      const sent = resp?.response?.sent ?? 0;
+      this._toast(sent > 0
+        ? `✓ ${sent} recette${sent > 1 ? "s" : ""} envoyée${sent > 1 ? "s" : ""} à Jow`
+        : "Aucun repas planifié à envoyer", sent === 0);
+    } catch (err) {
+      console.error("weekly-menu-card : échec send_menu", err);
+      this._toast("✕ Envoi impossible — token Jow requis ?", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
+    }
+  }
+
+  /** Import du menu Jow vers le planning HA (jours vides seulement). */
+  async _importerDepuisJow() {
+    if (this._occupe || !this._hass) return;
+    this._occupe = true;
+    this._signature = null;
+    this._render();
+    this._toast("Import du menu Jow…");
+    try {
+      const resp = await this._jowCallWS("import_menu", { week_offset: this._weekOffset });
+      const r = resp?.response || {};
+      if (r.error === "token_jow_absent") {
+        this._toast("Aucun compte Jow configuré (refresh token requis)", true);
+      } else if (typeof r.error === "string" && r.error.startsWith("http_")) {
+        this._toast("Jow a refusé la lecture du menu (endpoint instable) — réessayez", true);
+      } else {
+        const imp = r.imported ?? 0;
+        const skp = r.skipped ?? 0;
+        this._toast(imp > 0
+          ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""}${skp ? ` (${skp} ignorés)` : ""}`
+          : skp ? `Rien à importer (${skp} ignorés — jours déjà planifiés ?)` : "Menu Jow vide");
+      }
+    } catch (err) {
+      console.error("weekly-menu-card : échec import_menu", err);
+      this._toast("✕ Import impossible", true);
+    } finally {
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      this._differe(() => { this._signature = null; this._render(); }, 3000);
     }
   }
 
@@ -1984,6 +2067,9 @@ class WeeklyMenuCard extends HTMLElement {
       });
     });
 
+    R.querySelectorAll("[data-import-jow]").forEach((el) => {
+      el.addEventListener("click", () => this._importerDepuisJow());
+    });
     R.querySelectorAll("[data-envoyer-jow]").forEach((el) => {
       el.addEventListener("click", () => this._envoyerJow());
     });
@@ -2189,6 +2275,8 @@ const LIBELLES = {
   action_copy_meal: "Bouton « Copier vers… » (restes du lendemain)",
   action_favoris: "Bouton « Choisir parmi mes favoris »",
   action_rescue: "Bouton « Sauver les périssables » (suggest rescue)",
+  action_import_jow: "Bouton « Importer depuis Jow » (menu jow.fr → planning)",
+  send_jow_mode: "Mode du bouton Envoyer à Jow (tabs = ouvrir jow.fr, service = jow.send_menu)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   entites_s1: "Entités S+1 (semaine prochaine — auto si vide)",
@@ -2353,6 +2441,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_copy_meal", selector: { boolean: {} } },
         { name: "action_favoris", selector: { boolean: {} } },
         { name: "action_rescue", selector: { boolean: {} } },
+        { name: "action_import_jow", selector: { boolean: {} } },
+        { name: "send_jow_mode", selector: { select: { options: ["tabs", "service"] } } },
       ]},
       // ---- Instance & Entités S0 ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
@@ -2476,6 +2566,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_copy_meal: (this._config.actions || {}).copy_meal === true,
         action_favoris: (this._config.actions || {}).favoris === true,
         action_rescue: (this._config.actions || {}).rescue === true,
+        action_import_jow: (this._config.actions || {}).import_jow === true,
+        send_jow_mode: (this._config.actions || {}).send_jow_mode || this._config.send_jow_mode || "tabs",
         meal_done_service: (this._config.actions || {}).meal_done_service || "",
         clear_meal_service: (this._config.actions || {}).clear_meal_service || "",
       },
@@ -2549,6 +2641,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           copy_meal: actionsData.action_copy_meal === true,
           favoris: actionsData.action_favoris === true,
           rescue: actionsData.action_rescue === true,
+          import_jow: actionsData.action_import_jow === true,
+          send_jow_mode: actionsData.send_jow_mode || undefined,
         };
         // Services personnalisés (surcharge de jow.* par défaut)
         for (const champ of ["meal_done_service", "clear_meal_service"]) {
@@ -2663,6 +2757,13 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <label for="jc14">${LIBELLES.action_favoris}</label></div>
         <div class="case"><input type="checkbox" id="jc15" data-cle="action_rescue"${(this._config.actions || {}).rescue === true ? " checked" : ""}>
           <label for="jc15">${LIBELLES.action_rescue}</label></div>
+        <div class="case"><input type="checkbox" id="jc16" data-cle="action_import_jow"${(this._config.actions || {}).import_jow === true ? " checked" : ""}>
+          <label for="jc16">${LIBELLES.action_import_jow}</label></div>
+        <label><span class="lib">${LIBELLES.send_jow_mode}</span>
+          <select data-cle="send_jow_mode">
+            <option value="tabs"${(this._config.send_jow_mode !== "service") ? " selected" : ""}>Ouvrir jow.fr (onglets)</option>
+            <option value="service"${(this._config.send_jow_mode === "service") ? " selected" : ""}>Envoyer via jow.send_menu (avec dates)</option>
+          </select></label>
       </fieldset>
       <fieldset><legend>${LIBELLES.entites}</legend>
         <label><span class="lib">${LIBELLES.prefix}</span>
@@ -2748,6 +2849,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
         copy_meal: actionBool("action_copy_meal") === true,
         favoris: actionBool("action_favoris") === true,
         rescue: actionBool("action_rescue") === true,
+        import_jow: actionBool("action_import_jow") === true,
+        send_jow_mode: lire("send_jow_mode") === "service" ? "service" : undefined,
       },
     });
   }

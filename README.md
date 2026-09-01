@@ -46,6 +46,8 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | Option | Type | Défaut | Description |
 |---|---|---|---|
 | `title` | string | — | Titre affiché en en-tête de carte |
+| `prefix` | string | `sensor.jow_` | Préfixe des entités si `entities` n'est pas fourni |
+| `entry_name` | string | — | Instance Jow à cibler (param `entry_name` des services `jow.*`) — utile en multi-instance |
 | `entities` | list (7) | `sensor.jow_*` | Entités des 7 jours, de lundi à dimanche |
 | `entities_s1` | map | auto `_s1` | Entités de la semaine prochaine (suffixe `_s1` si absent) |
 | `days` | `7` \| `1` | `7` | Semaine entière (détail + index) ou un seul plat avec flèches |

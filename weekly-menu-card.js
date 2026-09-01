@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.0";
+const CARD_VERSION = "1.6.1";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -57,6 +57,9 @@ const DEFAUTS = {
   show_allergens: true,
   show_week_calories: false,   // Total calories de la semaine en pied de carte
   show_month: false,           // Vue mensuelle compacte (4 semaines)
+  // Instance Jow à cibler en multi-instance (param entry_name des services
+  // jow.*) ; vide = instance par défaut.
+  entry_name: "",
   replace_action: null,    // { service: "domaine.service", data: { … } }
   replace_ai_prompt: "",   // Prompt IA personnalisé (remplace le prompt par défaut)
   // Thèmes par jour : injectés dans le criteria de l'IA
@@ -71,11 +74,10 @@ const DEFAUTS = {
     clear_meal: true,       // Effacer le repas du jour
     refresh_shopping: false,// Régénérer la liste de courses
     copy_meal: false,       // Copier vers un autre jour (restes)
+    send_jow: false,        // Envoyer à Jow (ouvre jow.fr)
+    favoris: false,         // Choisir parmi les favoris
   },
 };
-
-let _wsId = 1;
-const nextWsId = () => _wsId++;
 
 /* Définition des boutons d'action prédéfinis.
    Chaque bouton appelle un service sur le jour actuellement affiché.
@@ -103,7 +105,8 @@ const ACTIONS_PREDEFINIES = {
     label: "Régénérer la liste de courses",
     icon: "⟳",
     service: "jow.refresh_shopping_list",
-    data: { week_offset: 0, keep_checked: true },
+    // week_offset est injecté dynamiquement selon la semaine affichée
+    data: { keep_checked: true },
     confirm: null,
   },
   send_jow: {
@@ -472,7 +475,18 @@ class WeeklyMenuCard extends HTMLElement {
   static getConfigElement() { return document.createElement("weekly-menu-card-editor"); }
 
   setConfig(config) {
-    this._config = { ...DEFAUTS, ...config };
+    // Merge profond pour les sous-objets (actions, day_themes) : une config
+    // partielle ne doit pas effacer les défauts des autres clés.
+    const fusion = (base, utilisateur) => {
+      const out = { ...base };
+      for (const [k, v] of Object.entries(utilisateur || {})) {
+        out[k] = v && typeof v === "object" && !Array.isArray(v) && base[k] && typeof base[k] === "object"
+          ? fusion(base[k], v)
+          : v;
+      }
+      return out;
+    };
+    this._config = fusion(DEFAUTS, config);
     this._config.days = Number(this._config.days) === 1 ? 1 : 7;
     this._champs = { ...CHAMPS, ...(config.attributes || {}) };
     this._entitesBase = this._config.entities || JOURS.map((j) => `${this._config.prefix}${j}`);
@@ -524,7 +538,7 @@ class WeeklyMenuCard extends HTMLElement {
         // pour detecter set_covers (qui ne change pas le state ni last_updated)
         const covers = a.covers || "";
         const ings = a.ingredients || [];
-        const ingQty = ings.map((i) => `${i.quantity||""}`).join(",");
+        const ingQty = ings.map((i) => `${i.quantity ?? ""}`).join(",");
         return `${s.state}:${s.last_updated}:${covers}:${ingQty}`;
       })
       .join("|") + `|${this._weekOffset}|${this._selection}|${this._occupe}|${[...this._imagesKO].join(",")}`;
@@ -847,7 +861,7 @@ class WeeklyMenuCard extends HTMLElement {
 
     // Liste structurée des ingrédients : quantité en mono à gauche, nom à droite.
     const items = j.ingredients.map((i) => {
-      const q = i.quantity
+      const q = i.quantity != null && i.quantity !== ""
         ? `<span class="q">${this._esc(i.quantity)}${i.unit ? " " + this._esc(i.unit) : ""}</span>`
         : `<span class="q"></span>`;
       const opt = i.optional ? ` <span class="opt">facultatif</span>` : "";
@@ -913,7 +927,7 @@ class WeeklyMenuCard extends HTMLElement {
         <div class="chiffres">${chiffres.join("")}</div>
         <div class="covers-adj">
           <button data-covers-minus="${j.index}"${this._occupe ? " disabled" : ""}>−</button>
-          <span>${j.couverts || this._config.covers || 2} couvert${(j.couverts || this._config.covers || 2) > 1 ? "s" : ""}</span>
+           <span>${j.couverts || 2} couvert${(j.couverts || 2) > 1 ? "s" : ""}</span>
           <button data-covers-plus="${j.index}"${this._occupe ? " disabled" : ""}>+</button>
         </div>
         ${compo}
@@ -1060,7 +1074,7 @@ class WeeklyMenuCard extends HTMLElement {
       this._signature = null;
       this._render();
       try {
-        await this._hass.callService("jow", "copy_meal", data);
+        await this._jowCall("copy_meal", data);
         this._toast(`✓ Repas copié vers ${JOURS[idxCible]}`);
       } catch (err) {
         console.error("weekly-menu-card : échec copy_meal", err);
@@ -1081,14 +1095,7 @@ class WeeklyMenuCard extends HTMLElement {
       this._render();
       try {
         // callWS avec return_response au niveau top-level (pas dans service_data)
-        const resp = await this._hass.callWS({
-          id: nextWsId(),
-          type: "call_service",
-          domain: "jow",
-          service: "sync_favorites",
-          service_data: {},
-          return_response: true,
-        });
+        const resp = await this._jowCallWS("sync_favorites");
         const recipes = (resp && resp.response && resp.response.recipes) || [];
         if (!recipes.length) {
           this._toast("Aucun favori trouvé — token Jow requis", true);
@@ -1106,8 +1113,10 @@ class WeeklyMenuCard extends HTMLElement {
         const jourLabel = JOURS[this._selection ?? this._aujourdhui()];
         const items = recipes.slice(0, 20).map((r, idx) => {
           const nom = r.name || r.title || "Recette";
-          const cal = r.calories ? ` — ${r.calories} kcal` : "";
-          const imgRaw = r.imageUrl ? `https://static.jow.fr/${r.imageUrl}` : null;
+          const cal = r.calories ? ` — ${this._esc(r.calories)} kcal` : "";
+          const imgRaw = r.imageUrl
+            ? (/^https?:\/\//i.test(r.imageUrl) ? r.imageUrl : `https://static.jow.fr/${r.imageUrl}`)
+            : null;
           const img = imgRaw ? `<img src="${this._url(imgRaw, true) || ""}" style="width:40px;height:40px;border-radius:6px;object-fit:cover" alt="">` : "";
           return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
             ${img}
@@ -1140,7 +1149,7 @@ class WeeklyMenuCard extends HTMLElement {
           btn.disabled = true;
           btn.textContent = "…";
           try {
-            await this._hass.callService("jow", "plan_meal", {
+            await this._jowCall("plan_meal", {
               query: nom,
               weekday: JOURS[this._selection ?? this._aujourdhui()],
               week_offset: this._weekOffset,
@@ -1176,12 +1185,22 @@ class WeeklyMenuCard extends HTMLElement {
     const data = Object.fromEntries(
       Object.entries(dataTemplate || {}).map(([k, v]) => [k, remplir(v)])
     );
+    // Actions jow.* : suivre la semaine affichée (S0/S+1) et viser la
+    // bonne instance. refresh_shopping_list avait week_offset: 0 en dur,
+    // meal_done/clear_meal n'envoyaient aucun week_offset.
+    if (domaine === "jow" && !("week_offset" in data)) {
+      data.week_offset = this._weekOffset;
+    }
 
     this._occupe = true;
     this._signature = null;
     this._render();
     try {
-      await this._hass.callService(domaine, service, data);
+      if (domaine === "jow") {
+        await this._jowCall(service, data);
+      } else {
+        await this._hass.callService(domaine, service, data);
+      }
       this._toast(`✓ ${def.label}`);
     } catch (err) {
       console.error(`weekly-menu-card : échec de ${domaine}.${service}`, err);
@@ -1291,6 +1310,32 @@ class WeeklyMenuCard extends HTMLElement {
     this._toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
   }
 
+  /** Appelle un service jow.* en injectant entry_name si configuré
+   *  (multi-instance) — point de passage unique pour tous les appels. */
+  _jowCall(service, data = {}) {
+    if (!this._hass) return Promise.resolve();
+    if (this._config?.entry_name) {
+      data = { ...data, entry_name: this._config.entry_name };
+    }
+    return this._hass.callService("jow", service, data);
+  }
+
+  /** Appelle un service jow.* via WebSocket avec réponse (return_response)
+   *  en injectant entry_name si configuré. */
+  _jowCallWS(service, data = {}) {
+    if (!this._hass) return Promise.resolve({});
+    if (this._config?.entry_name) {
+      data = { ...data, entry_name: this._config.entry_name };
+    }
+    return this._hass.callWS({
+      type: "call_service",
+      domain: "jow",
+      service,
+      service_data: data,
+      return_response: true,
+    });
+  }
+
   /** Déplace un plat d'un jour à un autre (copy_meal + clear_meal source). */
   async _deplacerPlat(from, to) {
     if (this._occupe || !this._hass) return;
@@ -1298,13 +1343,13 @@ class WeeklyMenuCard extends HTMLElement {
     this._signature = null;
     this._render();
     try {
-      await this._hass.callService("jow", "copy_meal", {
+      await this._jowCall("copy_meal", {
         weekday: JOURS[from],
         to_weekday: JOURS[to],
         week_offset: this._weekOffset,
         to_week_offset: this._weekOffset,
       });
-      await this._hass.callService("jow", "clear_meal", {
+      await this._jowCall("clear_meal", {
         weekday: JOURS[from],
         week_offset: this._weekOffset,
       });
@@ -1324,14 +1369,14 @@ class WeeklyMenuCard extends HTMLElement {
   async _changerCouverts(i, delta) {
     const jour = this._jour(i);
     if (!jour?.planned || this._occupe || !this._hass) return;
-    const actuel = jour.couverts || this._config.covers || 2;
+    const actuel = jour.couverts || 2;
     const nouveau = Math.max(1, Math.min(20, actuel + delta));
     if (nouveau === actuel) return;
     this._occupe = true;
     this._signature = null;
     this._render();
     try {
-      await this._hass.callService("jow", "set_covers", {
+      await this._jowCall("set_covers", {
         weekday: JOURS[i],
         week_offset: this._weekOffset,
         covers: nouveau,
@@ -1361,14 +1406,7 @@ class WeeklyMenuCard extends HTMLElement {
     // Récupérer le contexte depuis l'intégration via WebSocket
     let jowContext = null;
     try {
-      const resp = await this._hass.callWS({
-        id: nextWsId(),
-        type: "call_service",
-        domain: "jow",
-        service: "get_context",
-        service_data: {},
-        return_response: true,
-      });
+      const resp = await this._jowCallWS("get_context");
       jowContext = resp?.response || resp?.result?.response || {};
     } catch (e) { /* ignore */ }
 
@@ -1393,7 +1431,7 @@ class WeeklyMenuCard extends HTMLElement {
     const recents = recentsJow.length
       ? recentsJow.map((r) => {
           const excl = r.excluded !== false;
-          return `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${r.date})</span> ${
+          return `<li>${this._esc(r.name)} <span style="color:var(--gris)">(${this._esc(r.date)})</span> ${
             excl ? `<button data-clear-recent="${this._esc(r.date)}" style="margin-left:8px;padding:2px 8px;font-size:0.7rem;cursor:pointer;border:1px solid #666;border-radius:4px;background:none;color:inherit">Retirer</button>` : '<span style="color:#4a9;font-size:0.7rem">✓ retiré</span>'
           }</li>`;
         }).join("")
@@ -1500,7 +1538,7 @@ class WeeklyMenuCard extends HTMLElement {
         btn.disabled = true;
         btn.textContent = "…";
         try {
-          await this._hass.callService("jow", "clear_recent", { date });
+          await this._jowCall("clear_recent", { date });
           btn.textContent = "✓ retiré";
           btn.style.color = "#4a9";
           btn.disabled = false;
@@ -1516,7 +1554,7 @@ class WeeklyMenuCard extends HTMLElement {
       btn.addEventListener("click", async () => {
         const ing = btn.dataset.removeBanned;
         try {
-          await this._hass.callService("jow", "add_banned", { ingredient: ing, action: "remove" });
+          await this._jowCall("add_banned", { ingredient: ing, action: "remove" });
           const span = btn.parentElement;
           span.style.opacity = "0.3";
           span.style.textDecoration = "line-through";
@@ -1529,7 +1567,7 @@ class WeeklyMenuCard extends HTMLElement {
       input.addEventListener("keydown", async (e) => {
         if (e.key === "Enter" && input.value.trim()) {
           try {
-            await this._hass.callService("jow", "add_banned", { ingredient: input.value.trim(), action: "add" });
+            await this._jowCall("add_banned", { ingredient: input.value.trim(), action: "add" });
             input.value = "";
             input.placeholder = "✓ Ajouté — rouvrez ℹ pour voir";
           } catch (err) { input.placeholder = "✕ Erreur"; }
@@ -1542,7 +1580,7 @@ class WeeklyMenuCard extends HTMLElement {
       btn.addEventListener("click", async () => {
         const ing = btn.dataset.removeAvoid;
         try {
-          await this._hass.callService("jow", "add_avoid", { ingredient: ing, action: "remove" });
+          await this._jowCall("add_avoid", { ingredient: ing, action: "remove" });
           const span = btn.parentElement;
           span.style.opacity = "0.3";
           span.style.textDecoration = "line-through";
@@ -1555,7 +1593,7 @@ class WeeklyMenuCard extends HTMLElement {
       input.addEventListener("keydown", async (e) => {
         if (e.key === "Enter" && input.value.trim()) {
           try {
-            await this._hass.callService("jow", "add_avoid", { ingredient: input.value.trim(), action: "add" });
+            await this._jowCall("add_avoid", { ingredient: input.value.trim(), action: "add" });
             input.value = "";
             input.placeholder = "✓ Ajouté — rouvrez ℹ pour voir";
           } catch (err) { input.placeholder = "✕ Erreur"; }
@@ -1680,8 +1718,11 @@ class WeeklyMenuCard extends HTMLElement {
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
     data.week_offset = this._weekOffset;
-    // Enrichir le criteria avec le thème du jour et le frigo
-    data.criteria = this._criteriaAvecContexte(i, data.criteria);
+    // Enrichir le criteria avec le thème du jour et le frigo ;
+    // ne pas envoyer de champ criteria vide.
+    const criteria = this._criteriaAvecContexte(i, data.criteria);
+    if (criteria) data.criteria = criteria;
+    else delete data.criteria;
     // Prompt IA personnalisé
     if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
 
@@ -1719,7 +1760,8 @@ class WeeklyMenuCard extends HTMLElement {
     const data = Object.fromEntries(
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
-    // Le critère saisi est enrichi avec le thème du jour et le frigo
+    // Le critère saisi est enrichi avec le thème du jour et le frigo ;
+    // _suggest n'est appelé qu'avec du texte non vide (garde amont).
     data.criteria = this._criteriaAvecContexte(i, texte.trim());
     data.week_offset = this._weekOffset;
     if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
@@ -1753,8 +1795,11 @@ class WeeklyMenuCard extends HTMLElement {
     R.querySelector(".menu-tactile")?.remove();
     const menu = document.createElement("div");
     menu.className = "menu-tactile";
+    // Destinations : tous les autres jours, libres d'abord (un plat se
+    // déplace naturellement vers un jour vide ; écraser un repas existant
+    // reste possible via "Copier vers…").
     const dests = JOURS.map((j, i) => ({ j, i }))
-      .filter(({ i }) => i !== from && this._jour(i).planned !== false);
+      .filter(({ i }) => i !== from && !this._jour(i).planned);
     menu.innerHTML = `<div class="mt-titre">Déplacer « ${this._esc(jour.nom)} » vers</div>
       ${dests.map(({ j, i }) =>
         `<button data-vers="${i}">${COURTS[i]} ${this._esc(j)}</button>`
@@ -1860,14 +1905,23 @@ class WeeklyMenuCard extends HTMLElement {
       });
     });
 
-    // Bascule entre semaine courante (S) et semaine prochaine (S+1)
+    // Bascule entre semaine courante (S) et semaine prochaine (S+1).
+    // En vue mensuelle, "Quitter" (offset 0) referme aussi la vue.
     R.querySelectorAll("[data-semaine]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const offset = Number(btn.dataset.semaine);
+        let change = false;
         if (offset !== this._weekOffset) {
           this._weekOffset = offset;
           this._selection = null;
           this._imagesKO.clear();
+          change = true;
+        }
+        if (this._config.show_month) {
+          this._config = { ...this._config, show_month: false };
+          change = true;
+        }
+        if (change) {
           this._signature = null;
           this._render();
         }
@@ -1892,7 +1946,7 @@ class WeeklyMenuCard extends HTMLElement {
       btn.addEventListener("click", async () => {
         const ing = btn.dataset.stock;
         try {
-          await this._hass.callService("jow", "exclude_ingredient", { ingredient: ing });
+          await this._jowCall("exclude_ingredient", { ingredient: ing });
           this._toast(`✓ ${ing} retiré de la liste`);
         } catch (err) {
           this._toast("✕ Erreur", true);
@@ -2012,6 +2066,11 @@ const LIBELLES = {
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   entites_s1: "Entités S+1 (semaine prochaine — auto si vide)",
+  prefix: "Préfixe des entités (ex : sensor.jow_)",
+  entry_name: "Instance Jow (multi-instance — vide = défaut)",
+  s1lundi: "Lundi S+1", s1mardi: "Mardi S+1", s1mercredi: "Mercredi S+1",
+  s1jeudi: "Jeudi S+1", s1vendredi: "Vendredi S+1", s1samedi: "Samedi S+1",
+  s1dimanche: "Dimanche S+1",
   // ---- Correspondance des attributs (avancé) ----
   attributes_section: "Correspondance des attributs (avancé)",
   attributes_help: "À modifier uniquement si vos entités utilisent d'autres noms d'attributs que ha-jow",
@@ -2158,9 +2217,13 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_copy_meal", selector: { boolean: {} } },
         { name: "action_favoris", selector: { boolean: {} } },
       ]},
-      // ---- Entités S0 ----
+      // ---- Instance & Entités S0 ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
-        schema: JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })) },
+        schema: [
+          { name: "prefix", selector: { text: {} } },
+          { name: "entry_name", selector: { text: {} } },
+          ...JOURS.map((j) => ({ name: j, selector: { entity: { domain: "sensor" } } })),
+        ] },
       // ---- Entités S+1 ----
       { type: "expandable", name: "entites_s1", title: LIBELLES.entites_s1,
         schema: JOURS.map((j) => ({ name: `s1${j}`, selector: { entity: { domain: "sensor" } } })) },
@@ -2230,7 +2293,11 @@ class WeeklyMenuCardEditor extends HTMLElement {
         meal_done_service: (this._config.actions || {}).meal_done_service || "",
         clear_meal_service: (this._config.actions || {}).clear_meal_service || "",
       },
-      entites: ent,
+      entites: {
+        prefix: this._config.prefix || DEFAUTS.prefix,
+        entry_name: this._config.entry_name || "",
+        ...ent,
+      },
       entites_s1: entS1,
       attributes_section: {
         attr_name: attrs.name ?? CHAMPS.name ?? "",
@@ -2260,6 +2327,9 @@ class WeeklyMenuCardEditor extends HTMLElement {
         const existantes = this._entitesCourantes();
         const entities = JOURS.map((j) => entitesGroupe[j] || existantes[j]).filter(Boolean);
         delete v.entites;
+        // entry_name (multi-instance) remonte au niveau racine
+        const entry_name = (entitesGroupe.entry_name || "").trim();
+        const prefix = (entitesGroupe.prefix || "").trim();
 
         // Entités S+1 : merge avec les existantes (auto-déduit si vide)
         const entitesS1Groupe = v.entites_s1 || {};
@@ -2312,6 +2382,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(action ? { replace_action: action } : { replace_action: null }),
           ...(planNextData.plan_next_enabled === false ? { plan_next_enabled: false } : {}),
           ...(entities.length === 7 ? { entities } : {}),
+          ...(entry_name ? { entry_name } : {}),
+          ...(prefix ? { prefix } : {}),
           ...(Object.keys(entitiesS1).some((j) => entitiesS1[j]) ? { entities_s1: entitiesS1 } : {}),
           ...(attributes ? { attributes } : {}),
           ...(Object.keys(day_themes).length ? { day_themes } : {}),

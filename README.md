@@ -34,9 +34,10 @@ show_month: false           # vue mensuelle compacte (semaines existantes)
 replace_action:
   service: jow.suggest
   data:
-    query: poulet léger
-    date: "{date}"
-    choice: 1
+    criteria: poulet léger     # enrichi automatiquement du thème du jour et du frigo
+    weekday: "{weekday}"       # jeton interpolé par la carte
+    covers: 2
+    limit: 5
 ```
 
 La carte reste compatible avec n'importe quelle intégration : la correspondance d'attributs est configurable via `attributes`.

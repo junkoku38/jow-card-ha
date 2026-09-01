@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.3";
+const CARD_VERSION = "1.6.4";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -68,6 +68,22 @@ const DEFAUTS = {
   // Ingrédients disponibles (inventaire du frigo) : injectés dans le criteria
   // ex: "poulet, courgettes, tomates"
   fridge_ingredients: "",
+  // Presets de critères applicables à des jours précis. Chaque preset
+  // définit un criteria et/ou des contraintes quantitatives (max_calories,
+  // max_total_time en minutes) envoyées au service jow.suggest pour le
+  // CHOIX AUTOMATIQUE et le bouton « Changer de recette » de ces jours —
+  // jamais pour la barre « Proposer un plat » (prompt libre = précision).
+  // ex:
+  //   criteria_presets:
+  //     - name: Léger
+  //       criteria: plat léger et équilibré
+  //       max_calories: 600
+  //       days: [lundi, mercredi, vendredi]
+  //     - name: Rapide
+  //       criteria: recette simple
+  //       max_total_time: 25
+  //       days: [mardi, jeudi]
+  criteria_presets: [],
   // Boutons d'action prédéfinis (activés par défaut, configurables)
   actions: {
     meal_done: true,        // Marquer le repas comme fait
@@ -1030,8 +1046,12 @@ class WeeklyMenuCard extends HTMLElement {
       // déjà planifié sur S+1 — l'écrasement est réservé au clic explicite
       // « Changer de recette » sur un jour affiché.
       data.overwrite = false;
-      // Enrichir avec le thème du jour et le frigo (fallback si vide)
-      data.criteria = this._criteriaAvecContexte(i, data.criteria) || "plat varié équilibré";
+      // Preset du jour (criteria + contraintes kcal/temps) s'il y en a un,
+      // sinon enrichissement classique (thème + frigo, fallback neutre).
+      const avecPreset = this._appliquerPreset(data, i);
+      avecPreset.criteria =
+        avecPreset.criteria || this._criteriaAvecContexte(i, data.criteria) || "plat varié équilibré";
+      Object.assign(data, avecPreset);
       if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
       try {
         await this._hass.callService(action.domaine, action.service, data);
@@ -1629,6 +1649,35 @@ class WeeklyMenuCard extends HTMLElement {
     return parts.join(", ");
   }
 
+  /** Preset de critères applicable au jour i (null si aucun).
+   *  Un preset définit criteria + max_calories/max_total_time pour le
+   *  choix automatique et « Changer de recette » du jour — plusieurs
+   *  jours peuvent partager le même preset. */
+  _presetDuJour(i) {
+    const presets = this._config.criteria_presets || [];
+    const jour = JOURS[i];
+    for (const p of presets) {
+      const days = Array.isArray(p.days) ? p.days : [];
+      if (days.includes(jour)) return p;
+    }
+    return null;
+  }
+
+  /** Applique le preset du jour aux données de service (criteria fusionné
+   *  avec le contexte, contraintes quantitatives injectées). Ne s'applique
+   *  qu'au choix automatique / Changer de recette — jamais au prompt libre
+   *  de la barre « Proposer un plat ». */
+  _appliquerPreset(data, i) {
+    const preset = this._presetDuJour(i);
+    if (!preset) return data;
+    const out = { ...data };
+    const base = preset.criteria?.trim();
+    out.criteria = this._criteriaAvecContexte(i, base || out.criteria);
+    if (preset.max_calories != null) out.max_calories = Number(preset.max_calories);
+    if (preset.max_total_time != null) out.max_total_time = Number(preset.max_total_time);
+    return out;
+  }
+
   /** Ouvre les recettes de la semaine sur jow.fr dans des onglets.
    *  L'utilisateur n'a plus qu'à cliquer "Ajouter au menu" sur chacune.
    *  On ouvre le premier onglet directement (user gesture, pas de popup
@@ -1726,15 +1775,19 @@ class WeeklyMenuCard extends HTMLElement {
     const remplir = (v) => (typeof v === "string"
       ? v.replace("{date}", jour.date).replace("{weekday}", JOURS[i]).replace("{index}", String(i))
       : v);
-    const data = Object.fromEntries(
+    let data = Object.fromEntries(
       Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
     );
     data.week_offset = this._weekOffset;
-    // Enrichir le criteria avec le thème du jour et le frigo ;
-    // ne pas envoyer de champ criteria vide.
-    const criteria = this._criteriaAvecContexte(i, data.criteria);
-    if (criteria) data.criteria = criteria;
-    else delete data.criteria;
+    // Preset du jour (criteria + max_calories/max_total_time) : s'applique
+    // au bouton « Changer de recette ». Sans preset : enrichissement
+    // classique (thème du jour + frigo), sans champ criteria vide.
+    data = this._appliquerPreset(data, i);
+    if (!data.criteria) {
+      const criteria = this._criteriaAvecContexte(i, data.criteria);
+      if (criteria) data.criteria = criteria;
+      else delete data.criteria;
+    }
     // Prompt IA personnalisé
     if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;
 
@@ -2045,6 +2098,23 @@ const LIBELLES = {
   show_month: "Vue mensuelle (4 semaines compactes)",
   // ---- Thèmes & Frigo ----
   context_section: "Thèmes par jour & Inventaire du frigo",
+  presets_section: "Critères par jour (choix automatique)",
+  presets_help: "Presets appliqués au choix automatique et « Changer de recette » des jours sélectionnés — jamais à la barre « Proposer un plat ».",
+  preset_1_name: "Preset 1 — nom",
+  preset_1_criteria: "Preset 1 — critère (ex : plat léger équilibré)",
+  preset_1_calories: "Preset 1 — calories max (kcal, vide = aucune)",
+  preset_1_time: "Preset 1 — temps total max (min, vide = aucun)",
+  preset_1_days: "Preset 1 — jours concernés",
+  preset_2_name: "Preset 2 — nom",
+  preset_2_criteria: "Preset 2 — critère",
+  preset_2_calories: "Preset 2 — calories max (kcal, vide = aucune)",
+  preset_2_time: "Preset 2 — temps total max (min, vide = aucun)",
+  preset_2_days: "Preset 2 — jours concernés",
+  preset_3_name: "Preset 3 — nom",
+  preset_3_criteria: "Preset 3 — critère",
+  preset_3_calories: "Preset 3 — calories max (kcal, vide = aucune)",
+  preset_3_time: "Preset 3 — temps total max (min, vide = aucun)",
+  preset_3_days: "Preset 3 — jours concernés",
   day_themes_lundi: "Thème lundi (ex : végétarien)",
   day_themes_mardi: "Thème mardi (ex : poisson)",
   day_themes_mercredi: "Thème mercredi (ex : pâtes)",
@@ -2203,6 +2273,16 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "day_themes_dimanche", selector: { text: {} } },
         { name: "fridge_ingredients", selector: { text: { multiline: true } } },
       ]},
+      // ---- Presets de critères (choix automatique par jour) ----
+      { type: "expandable", name: "presets_section", title: LIBELLES.presets_section, schema:
+        [1, 2, 3].flatMap((n) => [
+          { name: `preset_${n}_name`, selector: { text: {} } },
+          { name: `preset_${n}_criteria`, selector: { text: {} } },
+          { name: `preset_${n}_calories`, selector: { number: { min: 100, max: 2000, step: 10, mode: "box" } } },
+          { name: `preset_${n}_time`, selector: { number: { min: 5, max: 240, step: 5, mode: "box" } } },
+          { name: `preset_${n}_days`, selector: { select: { multiple: true, options: JOURS } } },
+        ]),
+      },
       // ---- Bouton « Changer de recette » ----
       { type: "expandable", name: "replace_section", title: LIBELLES.replace_section, schema: [
         { name: "replace_enabled", selector: { boolean: {} } },
@@ -2256,6 +2336,53 @@ class WeeklyMenuCardEditor extends HTMLElement {
     ];
   }
 
+  /** Presets de l'éditeur : au plus 3 presets éditables (nom, critère,
+   *  calories/temps max, jours). Les presets au-delà de 3 définis en YAML
+   *  sont conservés tels quels. */
+  _donneesPresets() {
+    const out = {};
+    const presets = Array.isArray(this._config.criteria_presets) ? this._config.criteria_presets : [];
+    for (let n = 1; n <= 3; n++) {
+      const p = presets[n - 1] || {};
+      out[`preset_${n}_name`] = p.name || "";
+      out[`preset_${n}_criteria`] = p.criteria || "";
+      out[`preset_${n}_calories`] = p.max_calories ?? "";
+      out[`preset_${n}_time`] = p.max_total_time ?? "";
+      out[`preset_${n}_days`] = Array.isArray(p.days) ? p.days : [];
+    }
+    return out;
+  }
+
+  /** Reconstruire criteria_presets depuis les champs de l'éditeur :
+   *  un preset n'est conservé que s'il a un critère OU une contrainte
+   *  ET au moins un jour. Les jours en doublon entre presets reviennent
+   *  au premier preset qui les réclame (ordre de déclaration). */
+  _fabriquerPresets(data) {
+    const presets = [];
+    const claimed = new Set();
+    for (let n = 1; n <= 3; n++) {
+      const criteria = (data[`preset_${n}_criteria`] || "").trim();
+      const cal = data[`preset_${n}_calories`];
+      const time = data[`preset_${n}_time`];
+      const days = (data[`preset_${n}_days`] || []).filter((j) => {
+        if (claimed.has(j)) return false;
+        claimed.add(j);
+        return true;
+      });
+      if ((criteria || cal != null || time != null) && days.length) {
+        const p = {
+          name: (data[`preset_${n}_name`] || "").trim() || criteria || `Preset ${n}`,
+          days,
+        };
+        if (criteria) p.criteria = criteria;
+        if (cal != null && cal !== "") p.max_calories = Number(cal);
+        if (time != null && time !== "") p.max_total_time = Number(time);
+        presets.push(p);
+      }
+    }
+    return presets;
+  }
+
   _donnees() {
     const ent = this._entitesCourantes();
     const entS1 = {};
@@ -2282,6 +2409,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         day_themes_dimanche: this._config.day_themes?.dimanche || "",
         fridge_ingredients: this._config.fridge_ingredients || "",
       },
+      presets_section: this._donneesPresets(),
       replace_section: {
         replace_enabled: !!ra,
         replace_service: ra?.service || "jow.suggest",
@@ -2357,11 +2485,13 @@ class WeeklyMenuCardEditor extends HTMLElement {
         const actionsData = v.actions_section || {};
         const attrData = v.attributes_section || {};
         const ctxData = v.context_section || {};
+        const presetsData = v.presets_section || {};
         delete v.replace_section;
         delete v.plan_next_section;
         delete v.actions_section;
         delete v.attributes_section;
         delete v.context_section;
+        delete v.presets_section;
 
         const action = this._fabriquerAction(replaceData);
         const attributes = this._fabriquerAttributes(attrData);
@@ -2387,6 +2517,9 @@ class WeeklyMenuCardEditor extends HTMLElement {
         }
         const fridge_ingredients = ctxData.fridge_ingredients || "";
 
+        // Presets de critères (choix automatique par jour)
+        const criteria_presets = this._fabriquerPresets(presetsData);
+
         this._emettre({
           type: this._config.type,
           ...v,
@@ -2399,6 +2532,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           ...(Object.keys(entitiesS1).some((j) => entitiesS1[j]) ? { entities_s1: entitiesS1 } : {}),
           ...(attributes ? { attributes } : {}),
           ...(Object.keys(day_themes).length ? { day_themes } : {}),
+          ...(criteria_presets.length ? { criteria_presets } : {}),
           ...(fridge_ingredients ? { fridge_ingredients } : {}),
           ...(replaceData.replace_ai_prompt ? { replace_ai_prompt: replaceData.replace_ai_prompt } : {}),
           actions,

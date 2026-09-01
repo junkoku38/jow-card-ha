@@ -59,6 +59,7 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `replace_action` | map | — | Action de remplacement : `{ service: "domaine.svc", data: {...} }` avec jetons `{date}`, `{weekday}`, `{index}` |
 | `replace_ai_prompt` | string | — | Prompt IA personnalisé (envoyé comme `ai_prompt`) |
 | `day_themes` | map | `{}` | Thème par jour injecté dans le criteria (ex : `{ "lundi": "végétarien" }`) |
+| `criteria_presets` | list | `[]` | Presets appliqués au **choix automatique** et au bouton « Changer de recette » des jours listés — jamais à la barre « Proposer un plat » (prompt libre = précision). Ex : `{ name: Léger, criteria: "plat léger équilibré", max_calories: 600, days: [lundi, mercredi, vendredi] }`. Éditable visuellement (3 presets dans l'éditeur ; plus via YAML). `max_calories` : contrainte vérifiée en dur sur le plat planifié. `max_total_time` : filtre dur avant la sélection (prép. + cuisson). Nécessite l'intégration jow-meals ≥ 0.9.8. |
 | `fridge_ingredients` | string | — | Ingrédients disponibles (ex : `"poulet, courgettes"`) injectés dans le criteria |
 | `plan_next_enabled` | bool | `true` | Bouton « Planifier la semaine prochaine » (7 appels à `replace_action` avec `week_offset: 1`) |
 | `actions.meal_done` | bool | `true` | Bouton « Marquer comme fait » (`jow.meal_done`) |

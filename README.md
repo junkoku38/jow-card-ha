@@ -70,6 +70,7 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `actions.send_jow` | bool | `false` | Bouton « Envoyer à Jow » (ouvre les recettes sur jow.fr) |
 | `actions.copy_meal` | bool | `false` | Bouton « Copier vers… » (`jow.copy_meal`) |
 | `actions.favoris` | bool | `false` | Bouton « Choisir parmi mes favoris » (`jow.sync_favorites` + dialog) |
+| `actions.rescue` | bool | `false` | Bouton « Sauver les périssables » — `jow.suggest` avec `rescue_expiry: true` : l'IA reçoit les ingrédients du planning qui expirent sous 3 jours (viandes, crèmerie, légumes frais) et génère une recette pour les écouler. Nécessite jow-meals ≥ 0.11.0. |
 | `attributes` | map | ha-jow | Correspondance attributs pour intégrations tierces (Mealie, Tandoor…) : `name`, `planned`, `image`, `url`, `date`, `calories`, `allergens`, `covers`, `duration`, `cooking_time`, `ingredients` |
 
 ## Interactions

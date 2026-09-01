@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.5";
+const CARD_VERSION = "1.7.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -92,6 +92,7 @@ const DEFAUTS = {
     copy_meal: false,       // Copier vers un autre jour (restes)
     send_jow: false,        // Envoyer à Jow (ouvre jow.fr)
     favoris: false,         // Choisir parmi les favoris
+    rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
   },
 };
 
@@ -144,6 +145,15 @@ const ACTIONS_PREDEFINIES = {
     icon: "★",
     service: "jow.sync_favorites",
     data: {},
+    confirm: null,
+  },
+  rescue: {
+    label: "Sauver les ingrédients qui expirent",
+    icon: "⏰",
+    // suggest avec rescue_expiry : l'IA reçoit les périssables du planning
+    // qui expirent sous 3 jours et doit générer une recette qui les écoule.
+    service: "jow.suggest",
+    data: { weekday: "{weekday}" },
     confirm: null,
   },
 };
@@ -921,11 +931,18 @@ class WeeklyMenuCard extends HTMLElement {
          </button>`
       : "";
 
-    // Boutons d'action prédéfinis (meal_done, clear_meal, send_jow, copy_meal, favoris)
-    // refresh_shopping est déplacé en bas de la carte (pas dans le détail)
+    // Boutons d'action prédéfinis (meal_done, clear_meal, send_jow, copy_meal,
+    // favoris, rescue) — refresh_shopping est déplacé en bas de la carte.
+    // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
+    // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
+    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
-      .filter(([key]) => key !== "refresh_shopping" && actionsConfig[key] !== false)
+      .filter(([key]) => {
+        if (key === "refresh_shopping") return false;
+        if (OPTIONAL_ACTIONS.has(key)) return actionsConfig[key] === true;
+        return actionsConfig[key] !== false;
+      })
       .map(([key, def]) => {
         // Le bouton "Envoyer à Jow" ouvre les recettes dans des onglets,
         // pas un appel de service.
@@ -1242,6 +1259,12 @@ class WeeklyMenuCard extends HTMLElement {
     // meal_done/clear_meal n'envoyaient aucun week_offset.
     if (domaine === "jow" && !("week_offset" in data)) {
       data.week_offset = this._weekOffset;
+    }
+    // rescue : flag du service suggest + criteria neutre si absent
+    if (key === "rescue") {
+      data.rescue_expiry = true;
+      if (!data.criteria) data.criteria = "plat qui utilise les ingrédients à sauver";
+      this._toast("⏰ Recherche d'une recette pour écouler les périssables…");
     }
 
     this._occupe = true;
@@ -2165,6 +2188,7 @@ const LIBELLES = {
   action_send_jow: "Bouton « Envoyer à Jow » (ouvre les recettes)",
   action_copy_meal: "Bouton « Copier vers… » (restes du lendemain)",
   action_favoris: "Bouton « Choisir parmi mes favoris »",
+  action_rescue: "Bouton « Sauver les périssables » (suggest rescue)",
   // ---- Entités ----
   entites: "Entités des 7 jours (lundi à dimanche)",
   entites_s1: "Entités S+1 (semaine prochaine — auto si vide)",
@@ -2328,6 +2352,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         { name: "action_send_jow", selector: { boolean: {} } },
         { name: "action_copy_meal", selector: { boolean: {} } },
         { name: "action_favoris", selector: { boolean: {} } },
+        { name: "action_rescue", selector: { boolean: {} } },
       ]},
       // ---- Instance & Entités S0 ----
       { type: "expandable", name: "entites", title: LIBELLES.entites,
@@ -2450,6 +2475,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         action_send_jow: (this._config.actions || {}).send_jow === true,
         action_copy_meal: (this._config.actions || {}).copy_meal === true,
         action_favoris: (this._config.actions || {}).favoris === true,
+        action_rescue: (this._config.actions || {}).rescue === true,
         meal_done_service: (this._config.actions || {}).meal_done_service || "",
         clear_meal_service: (this._config.actions || {}).clear_meal_service || "",
       },
@@ -2522,6 +2548,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
           send_jow: actionsData.action_send_jow === true,
           copy_meal: actionsData.action_copy_meal === true,
           favoris: actionsData.action_favoris === true,
+          rescue: actionsData.action_rescue === true,
         };
         // Services personnalisés (surcharge de jow.* par défaut)
         for (const champ of ["meal_done_service", "clear_meal_service"]) {
@@ -2634,6 +2661,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <label for="jc13">${LIBELLES.action_copy_meal}</label></div>
         <div class="case"><input type="checkbox" id="jc14" data-cle="action_favoris"${(this._config.actions || {}).favoris === true ? " checked" : ""}>
           <label for="jc14">${LIBELLES.action_favoris}</label></div>
+        <div class="case"><input type="checkbox" id="jc15" data-cle="action_rescue"${(this._config.actions || {}).rescue === true ? " checked" : ""}>
+          <label for="jc15">${LIBELLES.action_rescue}</label></div>
       </fieldset>
       <fieldset><legend>${LIBELLES.entites}</legend>
         <label><span class="lib">${LIBELLES.prefix}</span>
@@ -2718,6 +2747,7 @@ class WeeklyMenuCardEditor extends HTMLElement {
         send_jow: actionBool("action_send_jow") === true,
         copy_meal: actionBool("action_copy_meal") === true,
         favoris: actionBool("action_favoris") === true,
+        rescue: actionBool("action_rescue") === true,
       },
     });
   }

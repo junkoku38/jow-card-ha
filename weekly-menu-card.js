@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "1.6.2";
+const CARD_VERSION = "1.6.3";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -1026,6 +1026,10 @@ class WeeklyMenuCard extends HTMLElement {
         Object.entries(action.data).map(([k, v]) => [k, remplir(v)])
       );
       data.week_offset = 1;
+      // Remplissage automatique de semaine : ne JAMAIS écraser un repas
+      // déjà planifié sur S+1 — l'écrasement est réservé au clic explicite
+      // « Changer de recette » sur un jour affiché.
+      data.overwrite = false;
       // Enrichir avec le thème du jour et le frigo (fallback si vide)
       data.criteria = this._criteriaAvecContexte(i, data.criteria) || "plat varié équilibré";
       if (this._config.replace_ai_prompt) data.ai_prompt = this._config.replace_ai_prompt;

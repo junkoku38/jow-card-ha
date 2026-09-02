@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.4.1";
+const CARD_VERSION = "2.5.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -643,6 +643,15 @@ class WeeklyMenuCard extends HTMLElement {
       }
     }
     if (sig + sigMois === this._signature) return;
+    // Modal ouvert (favoris, collections, détail) : l'interaction en
+    // cours prime sur le re-rendu — sans ce blocage, chaque changement
+    // de capteur (synchro en cours, kcal qui arrive…) détruisait le
+    // modal sous les yeux de l'utilisateur. Le rendu reprendra à la
+    // fermeture du modal (fermerOverlay → _signature = null → _render).
+    if (this._modalOuvert) {
+      this._signature = sig + sigMois; // garder la signature à jour
+      return;
+    }
     this._signature = sig + sigMois;
     this._render();
   }
@@ -914,6 +923,7 @@ class WeeklyMenuCard extends HTMLElement {
       </div>`;
 
     this._restaurerToast();
+    this._restaurerModal();
     this._brancher();
   }
 
@@ -1167,13 +1177,14 @@ class WeeklyMenuCard extends HTMLElement {
         }).join("");
         const overlay = document.createElement("div");
         overlay.className = "dialogue-overlay";
+      this._modalOuvert = true;
         overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
           <p class="dialogue-msg">📚 Mes collections Jow<br><span style="color:var(--gris);font-size:0.8rem">« Importer » planifie les recettes sur les jours vides de la ${this._esc(semLabel)}</span></p>
           <ul style="list-style:none;padding:0;margin:0">${items}</ul>
           <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
         </div>`;
         R.appendChild(overlay);
-        const fermerOverlay = () => { overlay.remove(); this._signature = null; this._render(); };
+        const fermerOverlay = () => { overlay.remove(); this._modalOuvert = false; this._signature = null; this._render(); };
         overlay.addEventListener("click", async (e) => {
           if (e.target === overlay) { fermerOverlay(); return; }
           if (e.target.closest('[data-rep="non"]')) { fermerOverlay(); return; }
@@ -1412,6 +1423,7 @@ class WeeklyMenuCard extends HTMLElement {
         }).join("");
         const overlay = document.createElement("div");
         overlay.className = "dialogue-overlay";
+      this._modalOuvert = true;
         overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
           <p class="dialogue-msg">★ Mes favoris Jow (${recipes.length})<br><span style="color:var(--gris);font-size:0.8rem">Cliquez « Planifier » pour ajouter au ${this._esc(jourLabel)}</span></p>
           <ul style="list-style:none;padding:0;margin:0">${items}</ul>
@@ -1419,7 +1431,7 @@ class WeeklyMenuCard extends HTMLElement {
         </div>`;
         R.appendChild(overlay);
         const fermerOverlay = () => {
-          overlay.remove();
+          overlay.remove(); this._modalOuvert = false;
           this._signature = null;
           this._render();
         };
@@ -1519,6 +1531,7 @@ class WeeklyMenuCard extends HTMLElement {
       if (!R) { resolve(false); return; }
       const overlay = document.createElement("div");
       overlay.className = "dialogue-overlay";
+      this._modalOuvert = true;
       overlay.innerHTML = `<div class="dialogue" role="alertdialog" aria-modal="true">
         <p class="dialogue-msg">${this._esc(message)}</p>
         <div class="dialogue-boutons">
@@ -1527,7 +1540,7 @@ class WeeklyMenuCard extends HTMLElement {
         </div>
       </div>`;
       R.appendChild(overlay);
-      const fermer = (val) => { overlay.remove(); resolve(val); };
+      const fermer = (val) => { overlay.remove(); this._modalOuvert = false; resolve(val); };
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) fermer(false);
         const btn = e.target.closest("[data-rep]");
@@ -1548,6 +1561,7 @@ class WeeklyMenuCard extends HTMLElement {
       ).join("");
       const overlay = document.createElement("div");
       overlay.className = "dialogue-overlay";
+      this._modalOuvert = true;
       overlay.innerHTML = `<div class="dialogue" role="alertdialog" aria-modal="true">
         <p class="dialogue-msg">${this._esc(message)}</p>
         <select class="dialogue-select">${opts}</select>
@@ -1558,7 +1572,7 @@ class WeeklyMenuCard extends HTMLElement {
       </div>`;
       R.appendChild(overlay);
       const select = overlay.querySelector("select");
-      const fermer = (val) => { overlay.remove(); resolve(val); };
+      const fermer = (val) => { overlay.remove(); this._modalOuvert = false; resolve(val); };
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) fermer(null);
         const btn = e.target.closest("[data-rep]");
@@ -1997,6 +2011,7 @@ class WeeklyMenuCard extends HTMLElement {
       if (!R) return;
       const overlay = document.createElement("div");
       overlay.className = "dialogue-overlay";
+      this._modalOuvert = true;
       const items = urls.map((u, i) =>
         `<button class="bouton" data-url="${this._esc(u)}" style="width:100%;text-align:left;margin-bottom:8px">Recette ${i + 1} ↗</button>`
       ).join("");
@@ -2007,9 +2022,9 @@ class WeeklyMenuCard extends HTMLElement {
       </div>`;
       R.appendChild(overlay);
       overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) { overlay.remove(); return; }
+        if (e.target === overlay) { overlay.remove(); this._modalOuvert = false; return; }
         const btn = e.target.closest("[data-rep]");
-        if (btn) { overlay.remove(); return; }
+        if (btn) { overlay.remove(); this._modalOuvert = false; return; }
         const urlBtn = e.target.closest("[data-url]");
         if (urlBtn) { window.open(urlBtn.dataset.url, "_blank", "noopener,noreferrer"); }
       });

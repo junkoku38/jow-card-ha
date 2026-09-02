@@ -72,6 +72,8 @@ La carte reste compatible avec n'importe quelle intégration : la correspondance
 | `actions.send_jow` | bool | `false` | Bouton « Envoyer à Jow » (ouvre les recettes sur jow.fr) |
 | `actions.copy_meal` | bool | `false` | Bouton « Copier vers… » (`jow.copy_meal`) |
 | `actions.favoris` | bool | `false` | Bouton « Choisir parmi mes favoris » (`jow.sync_favorites` + dialog) |
+| `actions.collections` | bool | `false` | Bouton « 📚 Importer une collection » : dialogue listant tes collections jow.fr → « Importer » planifie ses recettes sur les jours vides de la **semaine affichée** (S ou S+1). Nécessite jow-meals ≥ 1.6.5. |
+| `actions.export_week` | bool | `true` | Bouton « 📤 Exporter » (en-tête) : livre la semaine affichée dans une collection jow.fr « Semaine N » — réimportable dans l'app jow (cookbook) au moment de la liste d'achat. Nécessite jow-meals ≥ 1.6.5. |
 | `actions.rescue` | bool | `false` | Bouton « Sauver les périssables » — `jow.suggest` avec `rescue_expiry: true` : l'IA reçoit les ingrédients du planning qui expirent sous 3 jours (viandes, crèmerie, légumes frais) et génère une recette pour les écouler. Nécessite jow-meals ≥ 0.11.0. |
 | `actions.import_jow` | bool | `false` | Bouton « Importer depuis Jow » — `jow.import_menu` : les plats ajoutés sur jow.fr/l'app mobile atterrissent sur les jours vides du planning (jamais d'écrasement). Rapport importé/ignoré en toast. Nécessite jow-meals ≥ 0.11.0. |
 | `send_jow_mode` | string | `tabs` | Mode du bouton « Envoyer à Jow » : `tabs` = ouvre les recettes sur jow.fr (comportement historique) ; `service` = `jow.send_menu` — le menu du compte Jow se remplit jour par jour (dates + couverts). Nécessite jow-meals ≥ 0.11.0. |

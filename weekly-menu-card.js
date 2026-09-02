@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.3";
+const CARD_VERSION = "2.1.4";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -839,7 +839,8 @@ class WeeklyMenuCard extends HTMLElement {
     // Vue mensuelle compacte (4 semaines)
     if (this._config.show_month) {
       this.shadowRoot.innerHTML = `<style>${STYLES}</style>${this._vueMensuelle()}`;
-      this._brancher();
+      this._restaurerToast();
+    this._brancher();
       return;
     }
 
@@ -902,6 +903,7 @@ class WeeklyMenuCard extends HTMLElement {
           </p>` : ""}
       </div>`;
 
+    this._restaurerToast();
     this._brancher();
   }
 
@@ -1503,8 +1505,24 @@ class WeeklyMenuCard extends HTMLElement {
 
   /** Affiche un message éphémère en bas de la carte. */
   _toast(msg, isError = false) {
+    // mémoriser : un _render() (inner remplacé) peut survenir pendant la
+    // durée d'affichage — le toast est recréé à chaque rendu par
+    // _restaurerToast, sinon l'utilisateur ne voyait RIEN (toast détruit
+    // par le finally des actions, avant ses 2,5 s).
+    this._toastPending = { msg, isError };
+    this._restaurerToast();
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      this._toastPending = null;
+      const el = this.shadowRoot?.querySelector(".toast");
+      if (el) el.classList.remove("show");
+    }, 3000);
+  }
+
+  _restaurerToast() {
     const R = this.shadowRoot;
-    if (!R) return;
+    const t = this._toastPending;
+    if (!R || !t) return;
     let el = R.querySelector(".toast");
     if (!el) {
       el = document.createElement("div");
@@ -1513,12 +1531,9 @@ class WeeklyMenuCard extends HTMLElement {
       el.setAttribute("aria-live", "polite");
       R.appendChild(el);
     }
-    el.textContent = msg;
-    if (isError) el.style.background = "#a33";
-    else el.style.background = "";
+    el.textContent = t.msg;
+    el.style.background = t.isError ? "#a33" : "";
     requestAnimationFrame(() => el.classList.add("show"));
-    clearTimeout(this._toastTimer);
-    this._toastTimer = setTimeout(() => el.classList.remove("show"), 2500);
   }
 
   /** Appelle un service jow.* en injectant entry_name si configuré

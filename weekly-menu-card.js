@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.3.0";
+const CARD_VERSION = "2.4.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -97,6 +97,7 @@ const DEFAUTS = {
     copy_meal: false,       // Copier vers un autre jour (restes) — optionnel
     send_jow: false,        // Envoyer à Jow — optionnel (tabs) ou jow.send_menu (service)
     favoris: false,         // Choisir parmi les favoris
+    collections: false,    // Importer une collection dans la semaine
     rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
     import_jow: false,      // Importer le menu depuis jow.fr/l'app (jow.import_menu)
     export_week: true,       // Exporter la semaine vers une collection jow.fr
@@ -184,6 +185,13 @@ const ACTIONS_PREDEFINIES = {
     label: "Choisir parmi mes favoris",
     icon: "★",
     service: "jow.sync_favorites",
+    data: {},
+    confirm: null,
+  },
+  collections: {
+    label: "Importer une collection",
+    icon: "📚",
+    service: "jow.collections_list",
     data: {},
     confirm: null,
   },
@@ -998,7 +1006,7 @@ class WeeklyMenuCard extends HTMLElement {
     // Les boutons optionnels (favoris, rescue) n'apparaissent que s'ils
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
-    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue"]);
+    const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "collections"]);
     const DETAIL_EXCLUS = new Set(["send_jow", "import_jow", "clear_week", "renew_week"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
@@ -1272,6 +1280,80 @@ class WeeklyMenuCard extends HTMLElement {
     }
 
     // Cas spécial : favoris affiche les recettes dans un dialogue in-card
+    if (key === "collections") {
+      this._occupe = true;
+      this._signature = null;
+      this._render();
+      let collections;
+      try {
+        const resp = await this._jowCallWS("collections_list");
+        const payload = (resp && resp.response) || {};
+        collections = payload.collections || [];
+      } catch (err) {
+        console.error("weekly-menu-card : échec collections_list", err);
+        this._toast("✕ Lecture des collections impossible", true);
+        this._occupe = false; this._signature = null; this._render();
+        return;
+      }
+      this._occupe = false;
+      this._signature = null;
+      this._render();
+      const customs = collections.filter((c) => c.type !== "favorites" && c.type !== "try-later");
+      if (!customs.length) {
+        this._toast("Aucune collection — créez-en une avec 📤 Exporter", true);
+        return;
+      }
+      const R = this.shadowRoot;
+      if (!R) return;
+      const semLabel = this._weekOffset === 0 ? "cette semaine" : "semaine prochaine";
+      const items = customs.map((c, idx) => {
+        return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
+          <span style="flex:1"><b>📚 ${this._esc(c.title || "Collection")}</b><span style="color:var(--gris);font-size:0.8rem"> — ${this._esc(String(c.recettes ?? 0))} recette${(c.recettes ?? 0) > 1 ? "s" : ""}</span></span>
+          <button class="bouton" data-coll-import="${idx}" style="padding:6px 12px;cursor:pointer">Importer</button>
+        </li>`;
+      }).join("");
+      const overlay = document.createElement("div");
+      overlay.className = "dialogue-overlay";
+      overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
+        <p class="dialogue-msg">📚 Mes collections Jow<br><span style="color:var(--gris);font-size:0.8rem">« Importer » planifie les recettes sur les jours vides de la ${this._esc(semLabel)}</span></p>
+        <ul style="list-style:none;padding:0;margin:0">${items}</ul>
+        <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
+      </div>`;
+      R.appendChild(overlay);
+      const fermerOverlay = () => { overlay.remove(); this._signature = null; this._render(); };
+      overlay.addEventListener("click", async (e) => {
+        if (e.target === overlay) { fermerOverlay(); return; }
+        if (e.target.closest('[data-rep="non"]')) { fermerOverlay(); return; }
+        const btn = e.target.closest("[data-coll-import]");
+        if (!btn) return;
+        const c = customs[Number(btn.dataset.collImport)];
+        btn.disabled = true;
+        btn.textContent = "…";
+        try {
+          const resp = await this._jowCallWS("collection_import", {
+            collection_id: String(c.id),
+            week_offset: this._weekOffset,
+          });
+          const r = (resp && resp.response) || {};
+          if (r.error) {
+            this._toast(`✕ Import refusé : ${this._esc(String(r.error))}`, true);
+          } else {
+            const imp = r.imported ?? 0;
+            const skp = r.skipped ?? 0;
+            this._toast(imp > 0
+              ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""} de « ${this._esc(c.title)} »${skp ? ` (${skp} déjà connus)` : ""}`
+              : skp ? `Rien à importer (${skp} déjà planifiés ou refusés)` : "Collection vide");
+          }
+          fermerOverlay();
+        } catch (err) {
+          console.error("weekly-menu-card : échec collection_import", err);
+          btn.disabled = false;
+          btn.textContent = "Importer";
+          this._toast("✕ Import impossible", true);
+        }
+      });
+      return;
+    }
     if (key === "favoris") {
       this._occupe = true;
       this._signature = null;
@@ -2986,6 +3068,8 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <label for="jc17">${LIBELLES.action_clear_week}</label></div>
         <div class="case"><input type="checkbox" id="jc18" data-cle="action_renew_week"${(this._config.actions || {}).renew_week === true ? " checked" : ""}>
           <label for="jc18">${LIBELLES.action_renew_week}</label></div>
+        <div class="case"><input type="checkbox" id="jc21" data-cle="action_collections"${(this._config.actions || {}).collections === true ? " checked" : ""}>
+          <label for="jc21">${LIBELLES.action_collections}</label></div>
         <label><span class="lib">${LIBELLES.send_jow_mode}</span>
           <select data-cle="send_jow_mode">
             <option value="tabs"${(this._config.send_jow_mode !== "service") ? " selected" : ""}>Ouvrir jow.fr (onglets)</option>

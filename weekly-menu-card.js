@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.5";
+const CARD_VERSION = "2.2.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -1137,7 +1137,15 @@ class WeeklyMenuCard extends HTMLElement {
       if (r.error === "token_jow_absent") {
         this._toast("Aucun compte Jow configuré", true);
       } else if (r.error && String(r.error).startsWith("http_")) {
-        this._toast("Jow a refusé (magasin configuré sur jow.fr ?)", true);
+        // pas de session magasin : ouvrir la page d'auth guidée de HA
+        // (l'utilisateur s'authentifie sur jow.fr, MFA inclus, et colle
+        // son token — pas de script python)
+        const authOk = window.confirm(
+          "La session magasin n'est pas encore connectée dans Home Assistant.\n\n" +
+          "Ouvrir la page d'authentification guidée ?\n" +
+          "(1 minute : connexion enseigne sur jow.fr + collage du token)");
+        if (authOk) window.open("/api/jow/auth", "_blank");
+        this._toast("Session magasin requise — page d'authentification", true);
       } else {
         const items = r.items ?? 0;
         this._toast(items > 0

@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.4";
+const CARD_VERSION = "2.1.5";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,

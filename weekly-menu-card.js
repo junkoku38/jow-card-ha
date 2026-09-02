@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.2";
+const CARD_VERSION = "2.1.3";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -1077,9 +1077,22 @@ class WeeklyMenuCard extends HTMLElement {
    *  dédupliquant les recettes déjà planifiées. */
   /** Vue panier & santé (v2.0, show_cart) : capteurs d'état de la refonte
    *  + bouton de préparation de commande (lecture seule, sans paiement). */
+  /** Préfixe des capteurs d'état : config explicite, sinon auto-détection
+   *  (les instances nommées préfixent leurs capteurs : sensor.<nom>_jow_*)
+   *  — une édition via l'éditeur visuel écrase la config manuelle, le
+   *  fallback évite de perdre le bloc santé à chaque édition. */
+  _statePrefix() {
+    const conf = this._config.entity_prefix || this._config.prefix;
+    if (conf) return conf;
+    const states = Object.keys(this._hass?.states || {});
+    const hit = states.find((eid) => eid.endsWith("_jow_synchro")) || states.find((eid) => eid.includes("jow_synchro"));
+    if (hit) return hit.replace(/jow_synchro$/, "jow_");
+    return "sensor.jow_";
+  }
+
   _vuePanierSante() {
     if (!this._config.show_cart || !this._hass) return "";
-    const pre = (this._config.entity_prefix || this._config.prefix || "sensor.jow_").replace(/jow_$/, "jow_");
+    const pre = this._statePrefix();
     const synchro = this._hass.states[`${pre}synchro`];
     const compte = this._hass.states[`${pre}compte`];
     // Le nom du capteur v2.0 est « Plats dans Jow » → sensor.jow_plats_dans_jow ;

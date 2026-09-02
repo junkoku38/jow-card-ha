@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.1";
+const CARD_VERSION = "2.1.2";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -58,7 +58,7 @@ const DEFAUTS = {
   show_week_calories: false,   // Total calories de la semaine en pied de carte
   show_month: false,           // Vue mensuelle compacte (4 semaines)
   // Vue panier & santé (v2.0) : bloc sous la semaine affichant
-  // sensor.jow_panier_jow / sensor.jow_synchro / sensor.jow_compte et un
+  // sensor.jow_plats_dans_jow (repli panier_jow) / jow_synchro / jow_compte
   // bouton « Préparer la commande » (jow.order_cart). Lecture seule
   // ici — le paiement reste sur jow.fr ou via le service jow.order_pay.
   show_cart: false,
@@ -1986,15 +1986,22 @@ class WeeklyMenuCard extends HTMLElement {
       const r = resp?.response || {};
       if (r.error === "token_jow_absent") {
         this._toast("Aucun compte Jow configuré (refresh token requis)", true);
-      } else if (typeof r.error === "string" && r.error.startsWith("http_")) {
-        this._toast("Jow a refusé la lecture du menu (endpoint instable) — réessayez", true);
+      } else if (typeof r.error === "string") {
+        // http_* : API instable ; lecture_letscook_impossible : panne réseau
+        this._toast("Jow a refusé la lecture du menu — vérifiez votre connexion et réessayez", true);
       } else {
         const imp = r.imported ?? 0;
         const skp = r.skipped ?? 0;
         const rem = r.remaining ?? 0;
-        this._toast(imp > 0
-          ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""}${skp ? ` (${skp} déjà connus)` : ""}`
-          : skp ? `Menu Jow : ${skp} plat${skp > 1 ? "s" : ""} déjà planifié${skp > 1 ? "s" : ""} ou refusé${skp > 1 ? "s" : ""}${rem ? `, ${rem} en attente pour plus tard` : " — ajoute de nouvelles recettes sur jow.fr ou utilise 🎲"}` : "Menu Jow vide");
+        if (imp > 0) {
+          this._toast(`✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""}${rem ? ` · ${rem} en attente` : ""}`);
+        } else if (rem > 0) {
+          this._toast(`Semaine pleine — ${rem} plat${rem > 1 ? "s" : ""} du menu Jow en attente d'un jour libre`);
+        } else if (skp > 0) {
+          this._toast(`Menu Jow : ${skp} plat${skp > 1 ? "s" : ""} déjà planifié${skp > 1 ? "s" : ""} ou refusé${skp > 1 ? "s" : ""}`);
+        } else {
+          this._toast("Menu Jow vide — ajoutez des recettes sur jow.fr ou utilisez 🎲", true);
+        }
       }
     } catch (err) {
       console.error("weekly-menu-card : échec import_menu", err);

@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.5.0";
+const CARD_VERSION = "2.5.1";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -923,7 +923,6 @@ class WeeklyMenuCard extends HTMLElement {
       </div>`;
 
     this._restaurerToast();
-    this._restaurerModal();
     this._brancher();
   }
 

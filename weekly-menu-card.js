@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.2.0";
+const CARD_VERSION = "2.3.0";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -62,7 +62,6 @@ const DEFAUTS = {
   // bouton « Préparer la commande » (jow.order_cart). Lecture seule
   // ici — le paiement reste sur jow.fr ou via le service jow.order_pay.
   show_cart: false,
-  order_button: false,   // bouton « Préparer la commande » (jow.order_cart)
   // Instance Jow à cibler en multi-instance (param entry_name des services
   // jow.*) ; vide = instance par défaut.
   entry_name: "",
@@ -100,6 +99,7 @@ const DEFAUTS = {
     favoris: false,         // Choisir parmi les favoris
     rescue: false,          // Sauver les ingrédients qui expirent (suggest rescue)
     import_jow: false,      // Importer le menu depuis jow.fr/l'app (jow.import_menu)
+    export_week: true,       // Exporter la semaine vers une collection jow.fr
     clear_week: false,      // Vider la semaine (rejets mémorisés)
     renew_week: false,      // Renouveler la semaine (vider + replan IA)
     send_jow_mode: "tabs",  // "tabs" = ouvrir jow.fr, "service" = jow.send_menu (avec dates)
@@ -866,6 +866,7 @@ class WeeklyMenuCard extends HTMLElement {
           <span>
             ${actionsCfg.import_jow ? `<button data-import-jow="1" class="sync-btn" title="Importer le menu depuis jow.fr / l'app (jours vides seulement)" aria-label="Importer le menu depuis Jow"${this._occupe ? " disabled" : ""}>⇄ Jow</button>` : ""}
             ${actionsCfg.send_jow ? (() => { const mode = this._sendJowMode(); return `<button data-envoyer-jow="1" class="sync-btn" title="${mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>`; })() : ""}
+            ${actionsCfg.export_week ? `<button data-export-week="1" class="sync-btn" title="Livre cette semaine dans une collection jow.fr (Semaine N) — réimportable dans l'app jow pour la liste d'achat" aria-label="Exporter la semaine vers jow.fr"${this._occupe ? " disabled" : ""}>📤 Exporter</button>` : ""}
             ${actionsCfg.clear_week ? `<button data-action-semaine="clear_week" class="sync-btn danger" title="Vider les 7 repas de la semaine affichée (plats mémorisés comme refusés)" aria-label="Vider la semaine"${this._occupe ? " disabled" : ""}>🗑 Semaine</button>` : ""}
             ${actionsCfg.renew_week ? `<button data-action-semaine="renew_week" class="sync-btn" title="Renouveler toute la semaine : vider + 7 nouvelles suggestions IA" aria-label="Renouveler la semaine"${this._occupe ? " disabled" : ""}>🎲 Renouveler</button>` : ""}
             <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
@@ -1114,9 +1115,7 @@ class WeeklyMenuCard extends HTMLElement {
     if (panier) {
       rows.push(`<div class="ps-row"><span>🛒 Plats dans Jow</span><span>${this._esc(String(panier.state))} ${panier.state === "indisponible" ? "" : "plats"}</span></div>`);
     }
-    const bouton = this._config.order_button
-      ? `<button class="bouton" data-order-cart="1"${this._occupe ? " disabled" : ""}> Préparer la commande (panier fournisseur)</button>`
-      : "";
+    const bouton = "";  // (retiré : la commande fournisseur se fait sur jow.fr/app)
     return `<div class="panier-sante">
       <p class="compo-titre">Jow · synchro & commande</p>
       ${rows.join("")}
@@ -1124,37 +1123,26 @@ class WeeklyMenuCard extends HTMLElement {
     </div>`;
   }
 
-  /** Prépare le panier fournisseur (jow.order_cart) — sans paiement. */
-  async _preparerCommande() {
+  /** Exporte la semaine affichée vers une collection jow.fr
+   *  (« Semaine N ») — réimportable dans l'app jow (cookbook) au
+   *  moment de la liste d'achat. HA reste la source du planning. */
+  async _exporterSemaine() {
     if (this._occupe || !this._hass) return;
     this._occupe = true;
     this._signature = null;
     this._render();
-    this._toast("Préparation du panier fournisseur…");
+    this._toast("Export de la semaine vers jow.fr…");
     try {
-      const resp = await this._jowCallWS("order_cart", {});
+      const resp = await this._jowCallWS("export_week", { week_offset: this._weekOffset });
       const r = resp?.response || {};
-      if (r.error === "token_jow_absent") {
-        this._toast("Aucun compte Jow configuré", true);
-      } else if (r.error && String(r.error).startsWith("http_")) {
-        // pas de session magasin : ouvrir la page d'auth guidée de HA
-        // (l'utilisateur s'authentifie sur jow.fr, MFA inclus, et colle
-        // son token — pas de script python)
-        const authOk = window.confirm(
-          "La session magasin n'est pas encore connectée dans Home Assistant.\n\n" +
-          "Ouvrir la page d'authentification guidée ?\n" +
-          "(1 minute : connexion enseigne sur jow.fr + collage du token)");
-        if (authOk) window.open("/api/jow/auth", "_blank");
-        this._toast("Session magasin requise — page d'authentification", true);
+      if (r.error) {
+        this._toast(`✕ Export refusé : ${r.error}${r.aide ? " — voir réponse du service" : ""}`, true);
       } else {
-        const items = r.items ?? 0;
-        this._toast(items > 0
-          ? `✓ Panier préparé : ${items} articles${r.total ? ` · ${this._esc(String(r.total))}` : ""}`
-          : "Panier vide — menu Jow vide ?", items === 0);
+        this._toast(`✓ ${this._esc(r.collection || "Semaine")} exportée : ${r.exported} plats — retrouvez-la dans l'app jow (cookbook)`);
       }
     } catch (err) {
-      console.error("weekly-menu-card : échec order_cart", err);
-      this._toast("✕ Préparation impossible", true);
+      console.error("weekly-menu-card : échec export_week", err);
+      this._toast("✕ Export impossible", true);
     } finally {
       this._occupe = false;
       this._signature = null;
@@ -2279,9 +2267,9 @@ class WeeklyMenuCard extends HTMLElement {
     R.querySelectorAll("[data-import-jow]").forEach((el) => {
       el.addEventListener("click", () => this._importerDepuisJow());
     });
-    // Panier fournisseur (vue panier & santé)
-    R.querySelectorAll("[data-order-cart]").forEach((el) => {
-      el.addEventListener("click", () => this._preparerCommande());
+    // Exporter la semaine vers jow.fr (collection « Semaine N »)
+    R.querySelectorAll("[data-export-week]").forEach((el) => {
+      el.addEventListener("click", () => this._exporterSemaine());
     });
     // Actions semaine entière : vider / renouveler (avec confirmation)
     R.querySelectorAll("[data-action-semaine]").forEach((el) => {
@@ -2992,8 +2980,6 @@ class WeeklyMenuCardEditor extends HTMLElement {
           <label for="jc13">${LIBELLES.action_copy_meal}</label></div>
         <div class="case"><input type="checkbox" id="jc14" data-cle="action_favoris"${(this._config.actions || {}).favoris === true ? " checked" : ""}>
           <label for="jc14">${LIBELLES.action_favoris}</label></div>
-        <div class="case"><input type="checkbox" id="jc15" data-cle="action_rescue"${(this._config.actions || {}).rescue === true ? " checked" : ""}>
-          <label for="jc15">${LIBELLES.action_rescue}</label></div>
         <div class="case"><input type="checkbox" id="jc16" data-cle="action_import_jow"${(this._config.actions || {}).import_jow === true ? " checked" : ""}>
           <label for="jc16">${LIBELLES.action_import_jow}</label></div>
         <div class="case"><input type="checkbox" id="jc17" data-cle="action_clear_week"${(this._config.actions || {}).clear_week === true ? " checked" : ""}>
@@ -3080,7 +3066,6 @@ class WeeklyMenuCardEditor extends HTMLElement {
       ...(entry_name ? { entry_name } : {}),
       ...(fridge ? { fridge_ingredients: fridge } : {}),
       ...(lire("show_cart") ? { show_cart: true } : {}),
-      ...(lire("order_button") ? { order_button: true } : {}),
       ...(Object.keys(day_themes).length ? { day_themes } : {}),
       ...(Object.keys(entitiesS1).length ? { entities_s1: entitiesS1 } : {}),
       ...(entities.length === 7 ? { entities } : {}),

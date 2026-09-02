@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.1.0";
+const CARD_VERSION = "2.1.1";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -1991,9 +1991,10 @@ class WeeklyMenuCard extends HTMLElement {
       } else {
         const imp = r.imported ?? 0;
         const skp = r.skipped ?? 0;
+        const rem = r.remaining ?? 0;
         this._toast(imp > 0
-          ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""}${skp ? ` (${skp} ignorés)` : ""}`
-          : skp ? `Rien à importer (${skp} ignorés — jours déjà planifiés ?)` : "Menu Jow vide");
+          ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""}${skp ? ` (${skp} déjà connus)` : ""}`
+          : skp ? `Menu Jow : ${skp} plat${skp > 1 ? "s" : ""} déjà planifié${skp > 1 ? "s" : ""} ou refusé${skp > 1 ? "s" : ""}${rem ? `, ${rem} en attente pour plus tard` : " — ajoute de nouvelles recettes sur jow.fr ou utilise 🎲"}` : "Menu Jow vide");
       }
     } catch (err) {
       console.error("weekly-menu-card : échec import_menu", err);

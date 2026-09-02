@@ -14,7 +14,7 @@
  * Codes allergènes : règlement INCO (UE) 1169/2011.
  */
 
-const CARD_VERSION = "2.4.0";
+const CARD_VERSION = "2.4.1";
 
 console.info(
   `%c WEEKLY-MENU-CARD %c v${CARD_VERSION} `,
@@ -875,6 +875,7 @@ class WeeklyMenuCard extends HTMLElement {
             ${actionsCfg.import_jow ? `<button data-import-jow="1" class="sync-btn" title="Importer le menu depuis jow.fr / l'app (jours vides seulement)" aria-label="Importer le menu depuis Jow"${this._occupe ? " disabled" : ""}>⇄ Jow</button>` : ""}
             ${actionsCfg.send_jow ? (() => { const mode = this._sendJowMode(); return `<button data-envoyer-jow="1" class="sync-btn" title="${mode === "service" ? "Envoyer le planning au compte Jow (avec dates)" : "Ouvrir les recettes sur jow.fr"}" aria-label="Envoyer à Jow"${this._occupe ? " disabled" : ""}>${mode === "service" ? "🛒 Envoyer" : "🛒 Jow"}</button>`; })() : ""}
             ${actionsCfg.export_week ? `<button data-export-week="1" class="sync-btn" title="Livre cette semaine dans une collection jow.fr (Semaine N) — réimportable dans l'app jow pour la liste d'achat" aria-label="Exporter la semaine vers jow.fr"${this._occupe ? " disabled" : ""}>📤 Exporter</button>` : ""}
+            ${actionsCfg.collections ? `<button data-coll-open="1" class="sync-btn" title="Importer une collection jow.fr sur les jours vides de la semaine affichée" aria-label="Importer une collection"${this._occupe ? " disabled" : ""}>📚 Collections</button>` : ""}
             ${actionsCfg.clear_week ? `<button data-action-semaine="clear_week" class="sync-btn danger" title="Vider les 7 repas de la semaine affichée (plats mémorisés comme refusés)" aria-label="Vider la semaine"${this._occupe ? " disabled" : ""}>🗑 Semaine</button>` : ""}
             ${actionsCfg.renew_week ? `<button data-action-semaine="renew_week" class="sync-btn" title="Renouveler toute la semaine : vider + 7 nouvelles suggestions IA" aria-label="Renouveler la semaine"${this._occupe ? " disabled" : ""}>🎲 Renouveler</button>` : ""}
             <button data-semaine="0" aria-label="Semaine en cours" class="${this._weekOffset === 0 ? "actif" : ""}">S</button>
@@ -1007,7 +1008,7 @@ class WeeklyMenuCard extends HTMLElement {
     // sont activés explicitement dans la config.
     const actionsConfig = this._config.actions || {};
     const OPTIONAL_ACTIONS = new Set(["favoris", "rescue", "collections"]);
-    const DETAIL_EXCLUS = new Set(["send_jow", "import_jow", "clear_week", "renew_week"]);
+    const DETAIL_EXCLUS = new Set(["send_jow", "import_jow", "clear_week", "renew_week", "collections"]);
     const boutonsActions = Object.entries(ACTIONS_PREDEFINIES)
       .filter(([key]) => {
         if (key === "refresh_shopping") return false;
@@ -1130,6 +1131,82 @@ class WeeklyMenuCard extends HTMLElement {
       ${bouton}
     </div>`;
   }
+
+  /** Ouvre le dialogue d'import de collection (bouton en-tête 📚). */
+  async _ouvrirCollections() {
+        this._occupe = true;
+        this._signature = null;
+        this._render();
+        let collections;
+        try {
+          const resp = await this._jowCallWS("collections_list");
+          const payload = (resp && resp.response) || {};
+          collections = payload.collections || [];
+        } catch (err) {
+          console.error("weekly-menu-card : échec collections_list", err);
+          this._toast("✕ Lecture des collections impossible", true);
+          this._occupe = false; this._signature = null; this._render();
+          return;
+        }
+        this._occupe = false;
+        this._signature = null;
+        this._render();
+        const customs = collections.filter((c) => c.type !== "favorites" && c.type !== "try-later");
+        if (!customs.length) {
+          this._toast("Aucune collection — créez-en une avec 📤 Exporter", true);
+          return;
+        }
+        const R = this.shadowRoot;
+        if (!R) return;
+        const semLabel = this._weekOffset === 0 ? "cette semaine" : "semaine prochaine";
+        const items = customs.map((c, idx) => {
+          return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
+            <span style="flex:1"><b>📚 ${this._esc(c.title || "Collection")}</b><span style="color:var(--gris);font-size:0.8rem"> — ${this._esc(String(c.recettes ?? 0))} recette${(c.recettes ?? 0) > 1 ? "s" : ""}</span></span>
+            <button class="bouton" data-coll-import="${idx}" style="padding:6px 12px;cursor:pointer">Importer</button>
+          </li>`;
+        }).join("");
+        const overlay = document.createElement("div");
+        overlay.className = "dialogue-overlay";
+        overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
+          <p class="dialogue-msg">📚 Mes collections Jow<br><span style="color:var(--gris);font-size:0.8rem">« Importer » planifie les recettes sur les jours vides de la ${this._esc(semLabel)}</span></p>
+          <ul style="list-style:none;padding:0;margin:0">${items}</ul>
+          <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
+        </div>`;
+        R.appendChild(overlay);
+        const fermerOverlay = () => { overlay.remove(); this._signature = null; this._render(); };
+        overlay.addEventListener("click", async (e) => {
+          if (e.target === overlay) { fermerOverlay(); return; }
+          if (e.target.closest('[data-rep="non"]')) { fermerOverlay(); return; }
+          const btn = e.target.closest("[data-coll-import]");
+          if (!btn) return;
+          const c = customs[Number(btn.dataset.collImport)];
+          btn.disabled = true;
+          btn.textContent = "…";
+          try {
+            const resp = await this._jowCallWS("collection_import", {
+              collection_id: String(c.id),
+              week_offset: this._weekOffset,
+            });
+            const r = (resp && resp.response) || {};
+            if (r.error) {
+              this._toast(`✕ Import refusé : ${this._esc(String(r.error))}`, true);
+            } else {
+              const imp = r.imported ?? 0;
+              const skp = r.skipped ?? 0;
+              this._toast(imp > 0
+                ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""} de « ${this._esc(c.title)} »${skp ? ` (${skp} déjà connus)` : ""}`
+                : skp ? `Rien à importer (${skp} déjà planifiés ou refusés)` : "Collection vide");
+            }
+            fermerOverlay();
+          } catch (err) {
+            console.error("weekly-menu-card : échec collection_import", err);
+            btn.disabled = false;
+            btn.textContent = "Importer";
+            this._toast("✕ Import impossible", true);
+          }
+        });
+        return;
+    }
 
   /** Exporte la semaine affichée vers une collection jow.fr
    *  (« Semaine N ») — réimportable dans l'app jow (cookbook) au
@@ -1281,78 +1358,7 @@ class WeeklyMenuCard extends HTMLElement {
 
     // Cas spécial : favoris affiche les recettes dans un dialogue in-card
     if (key === "collections") {
-      this._occupe = true;
-      this._signature = null;
-      this._render();
-      let collections;
-      try {
-        const resp = await this._jowCallWS("collections_list");
-        const payload = (resp && resp.response) || {};
-        collections = payload.collections || [];
-      } catch (err) {
-        console.error("weekly-menu-card : échec collections_list", err);
-        this._toast("✕ Lecture des collections impossible", true);
-        this._occupe = false; this._signature = null; this._render();
-        return;
-      }
-      this._occupe = false;
-      this._signature = null;
-      this._render();
-      const customs = collections.filter((c) => c.type !== "favorites" && c.type !== "try-later");
-      if (!customs.length) {
-        this._toast("Aucune collection — créez-en une avec 📤 Exporter", true);
-        return;
-      }
-      const R = this.shadowRoot;
-      if (!R) return;
-      const semLabel = this._weekOffset === 0 ? "cette semaine" : "semaine prochaine";
-      const items = customs.map((c, idx) => {
-        return `<li style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--filet-fin)">
-          <span style="flex:1"><b>📚 ${this._esc(c.title || "Collection")}</b><span style="color:var(--gris);font-size:0.8rem"> — ${this._esc(String(c.recettes ?? 0))} recette${(c.recettes ?? 0) > 1 ? "s" : ""}</span></span>
-          <button class="bouton" data-coll-import="${idx}" style="padding:6px 12px;cursor:pointer">Importer</button>
-        </li>`;
-      }).join("");
-      const overlay = document.createElement("div");
-      overlay.className = "dialogue-overlay";
-      overlay.innerHTML = `<div class="dialogue" role="dialog" aria-modal="true" style="max-width:500px;max-height:80vh;overflow-y:auto">
-        <p class="dialogue-msg">📚 Mes collections Jow<br><span style="color:var(--gris);font-size:0.8rem">« Importer » planifie les recettes sur les jours vides de la ${this._esc(semLabel)}</span></p>
-        <ul style="list-style:none;padding:0;margin:0">${items}</ul>
-        <div class="dialogue-boutons"><button data-rep="non">Fermer</button></div>
-      </div>`;
-      R.appendChild(overlay);
-      const fermerOverlay = () => { overlay.remove(); this._signature = null; this._render(); };
-      overlay.addEventListener("click", async (e) => {
-        if (e.target === overlay) { fermerOverlay(); return; }
-        if (e.target.closest('[data-rep="non"]')) { fermerOverlay(); return; }
-        const btn = e.target.closest("[data-coll-import]");
-        if (!btn) return;
-        const c = customs[Number(btn.dataset.collImport)];
-        btn.disabled = true;
-        btn.textContent = "…";
-        try {
-          const resp = await this._jowCallWS("collection_import", {
-            collection_id: String(c.id),
-            week_offset: this._weekOffset,
-          });
-          const r = (resp && resp.response) || {};
-          if (r.error) {
-            this._toast(`✕ Import refusé : ${this._esc(String(r.error))}`, true);
-          } else {
-            const imp = r.imported ?? 0;
-            const skp = r.skipped ?? 0;
-            this._toast(imp > 0
-              ? `✓ ${imp} plat${imp > 1 ? "s" : ""} importé${imp > 1 ? "s" : ""} de « ${this._esc(c.title)} »${skp ? ` (${skp} déjà connus)` : ""}`
-              : skp ? `Rien à importer (${skp} déjà planifiés ou refusés)` : "Collection vide");
-          }
-          fermerOverlay();
-        } catch (err) {
-          console.error("weekly-menu-card : échec collection_import", err);
-          btn.disabled = false;
-          btn.textContent = "Importer";
-          this._toast("✕ Import impossible", true);
-        }
-      });
-      return;
+      return this._ouvrirCollections();
     }
     if (key === "favoris") {
       this._occupe = true;
@@ -2352,6 +2358,10 @@ class WeeklyMenuCard extends HTMLElement {
     // Exporter la semaine vers jow.fr (collection « Semaine N »)
     R.querySelectorAll("[data-export-week]").forEach((el) => {
       el.addEventListener("click", () => this._exporterSemaine());
+    });
+    // Importer une collection (dialog, semaine affichée)
+    R.querySelectorAll("[data-coll-open]").forEach((el) => {
+      el.addEventListener("click", () => this._ouvrirCollections());
     });
     // Actions semaine entière : vider / renouveler (avec confirmation)
     R.querySelectorAll("[data-action-semaine]").forEach((el) => {
